@@ -38,6 +38,8 @@ hf download Systran/faster-whisper-small config.json model.bin tokenizer.json vo
 - `clips/vox.py` запускает один долгоживущий воркер синтеза через JSON Lines. `clips/whisper.py` запускает CPU-воркер на проверку. FFmpeg преобразует WAV-референсы и кодирует MP3. Голоса, WAV, отчёты и выпуски имеют привязку к редакции и происхождению.
 - `packaging/tts-clips.spec` описывает RPM, `packaging/setup.py` устанавливает runtime и модели, `packaging/tts-clips.service` задаёт запуск. Версия доступна в `/openapi.json`. При ошибках сначала посмотрите журнал Uvicorn и состояние задания через API.
 
+При повторной отправке `POST /api/clips/{id}/generations` передавайте тот же `key` и тело, чтобы получить прежний пакет. Для новой попытки выделяйте новый ключ. Ответ `422` с `detail.code = "speech_ready"` содержит данные подтверждения. После решения монтажёра повторите команду с `speech_confirmation` для той же редакции и замечаний. Схема текущих запросов доступна в `/docs`. История QC доступна через `GET /api/clips/{id}/takes/{take_id}/qc`.
+
 ## Тесты и RPM
 
 ```bash

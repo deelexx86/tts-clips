@@ -9,7 +9,7 @@
 
 ## Первая установка
 
-1. Скачайте RPM и файл `.sha256` из prerelease `v0.1.0-rc1`. Сверьте контрольную сумму. Установите пакет, NGINX и FFmpeg с `libmp3lame`. Пример с FFmpeg из одобренного корпоративного репозитория:
+1. Скачайте RPM и файл `.sha256` из prerelease `v0.1.0-rc1`. Сверьте контрольную сумму. RPM опубликован без подписи. Если внутренний репозиторий требует подпись, примените принятую в компании процедуру. Установите пакет, NGINX и FFmpeg с `libmp3lame`. Пример с FFmpeg из одобренного корпоративного репозитория:
 
    ```bash
    sha256sum -c tts-clips-0.1.0-rc1-1.el9.x86_64.rpm.sha256
@@ -43,7 +43,7 @@
    sudo systemctl reload nginx
    ```
 
-   Разрешите входящий HTTPS только из корпоративной сети в нужной зоне firewalld или на сетевом экране. Если корпоративный прокси уже обеспечивает TLS и вход, используйте его корпоративные правила доступа и перенесите параметры из шаблона NGINX. Сохраните то же публичное HTTPS-имя для интерфейса, API и аудио. Backend должен оставаться доступным лишь с этого хоста. [NGINX и SELinux на RHEL 9](https://docs.redhat.com/en/documentation/red_hat_enterprise_linux/9/html-single/deploying_web_servers_and_reverse_proxies/index)
+   Разрешите входящий HTTPS только из корпоративной сети в нужной зоне firewalld или на сетевом экране. Если локальный NGINX уже интегрирован с корпоративной аутентификацией, примените действующие правила входа и сохраните параметры проксирования из шаблона. Используйте одно HTTPS-имя для интерфейса, API и аудио. Оставьте FastAPI на loopback. [NGINX и SELinux на RHEL 9](https://docs.redhat.com/en/documentation/red_hat_enterprise_linux/9/html-single/deploying_web_servers_and_reverse_proxies/index)
 
 3. Проверьте `systemctl is-enabled tts-clips nginx` и `systemctl is-active tts-clips nginx`. В браузере откройте корпоративный адрес. Убедитесь, что без входа адрес требует учётные данные и после входа доступны редактор и аудио.
 

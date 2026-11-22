@@ -14,6 +14,7 @@ import wave
 
 from .audio import RATE, wav_info
 from .completion import POLICY
+from .recovery import admission
 from .store import Conflict
 from .takes import material, review, selection
 from .text import digest
@@ -118,8 +119,9 @@ class Exports:
                     inputs.append((location, take, None, None, "unavailable"))
                 else:
                     location["selection_version"] = choice["version"]
-                    inputs.append((location, take, review(conn, take_id),
-                                   self.jobs.qc.snapshot(conn, take_id), None))
+                    qc = self.jobs.qc.snapshot(conn, take_id)
+                    qc["recovery_approved"] = admission(conn, take_id, qc["report"]["id"] if qc["report"] else None)
+                    inputs.append((location, take, review(conn, take_id), qc, None))
         return clip, inputs
 
     def pcm(self, asset):
@@ -147,6 +149,8 @@ class Exports:
             return "qc_" + qc["state"]
         if report["status"] != "verified":
             return report["status"]
+        if not qc["recovery_approved"]:
+            return "recovery_review"
         expected = {
             "audio_sha256": take["result"]["asset"]["sha256"],
             "text_sha256": take["text_hash"], "language": clip["language"],

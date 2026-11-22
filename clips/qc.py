@@ -119,6 +119,7 @@ class QualityControl:
                 if take_id is None:
                     break
                 self.execute(take_id)
+                self.jobs.recovery.advance(take_id)
 
     def execute(self, take_id):
         if self.recognizer is None:

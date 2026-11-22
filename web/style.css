@@ -151,6 +151,14 @@ textarea::selection { background: #cbe3cb; color: #16251c; }
 .export-history audio { display: block; width: min(100%, 420px); height: 44px; }
 .export-history .actions { margin-top: 8px; }
 .export-history a { text-decoration: none; }
+.recovery-options { align-items: center; margin: 10px 0; font-size: 13px; }
+.recovery-options input { accent-color: var(--green); margin-right: 5px; }
+.recovery-runs { margin: 10px 0; font-size: 13px; }
+.recovery-runs details { border-bottom: 1px solid var(--line); padding: 8px 0; }
+.recovery-runs details > button { margin-top: 7px; }
+.recovery-result { margin: 8px 0 0 12px; overflow-wrap: anywhere; line-height: 1.5; }
+.recovery-result li { margin: 5px 0; }
+.recovery-reason { display: block; color: var(--muted); font-size: 13px; }
 .voice-activity { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 4px 0; }
 .voice-error, .voice-activity p { color: #963d24; overflow-wrap: anywhere; }
 @media (max-width: 950px) {

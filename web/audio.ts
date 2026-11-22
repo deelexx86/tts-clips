@@ -4,7 +4,8 @@ export type Job = {
   state: "queued" | "running" | "ready" | "failed" | "cancelled" | "interrupted";
   phase: "connecting" | "loading" | "synthesizing" | null;
   error: string | null;
-  request: { text: string; seed: number; mode: "design" | "clone" };
+  request: { text: string; seed: number; mode: "design" | "clone";
+    recovery?: { source_take: string; strategy: "full" | "split" } };
   result: { asset: Asset; reused: boolean } | null;
   segment_id: string | null;
   text_hash: string | null;

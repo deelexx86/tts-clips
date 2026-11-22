@@ -52,6 +52,7 @@ def migrate(conn):
         SELECT j.clip_id,j.segment_id,j.text_hash,j.voice_id,j.id,NULL,1 FROM voice_job j
         WHERE j.kind='segment' AND j.state='ready'
           AND NOT EXISTS (SELECT 1 FROM generation_item i WHERE i.job_id=j.id)
+          AND NOT EXISTS (SELECT 1 FROM recovery_attempt a WHERE a.job_id=j.id)
         ORDER BY j.rowid DESC
     """)
 
@@ -113,7 +114,8 @@ class Takes:
                     job["qc"] = self.jobs.qc.snapshot(conn, job["id"])
                 jobs.append(job)
             selections = conn.execute("SELECT * FROM take_selection WHERE clip_id=?", (clip_id,))
-            return {"jobs": jobs, "selections": [dict(row) for row in selections]}
+            return {"jobs": jobs, "selections": [dict(row) for row in selections],
+                    "recoveries": self.jobs.recovery.list(conn, clip_id)}
 
     def generate(self, clip_id, command):
         serialized = json.dumps(command, sort_keys=True)

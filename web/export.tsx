@@ -32,6 +32,7 @@ const messages: Record<string, string> = {
   qc_running: "Проверка ещё выполняется.",
   qc_failed: "Проверка завершилась ошибкой.",
   qc_unavailable: "Whisper недоступен.",
+  recovery_review: "Проверьте восстановленный дубль на слух и примите его вручную.",
   verified: "Полнота подтверждена",
   manual: "Принят после прослушивания",
 };

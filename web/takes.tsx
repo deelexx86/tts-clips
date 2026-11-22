@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { api, HttpError, json, pending, phases, states, type Job } from "./audio";
 import { hasProblem, QcDetails, qcPending, type QC } from "./qc";
+import { RecoveryRuns, strategyName, type RecoveryCommand, type RecoveryRun } from "./recovery";
 
 type Review = { listened: boolean; decision: "pending" | "accepted" | "rejected"; note: string };
 type Take = Job & { generation_id: string | null; review?: Review; qc?: QC };
 type Choice = { clip_id: string; segment_id: string; text_hash: string; voice_id: string;
   current: string; previous: string | null; version: number };
-type Workspace = { jobs: Take[]; selections: Choice[] };
+type Workspace = { jobs: Take[]; selections: Choice[]; recoveries: RecoveryRun[] };
 type Command = {
   revision: string; key: string; mode: "selected" | "missing" | "repeat" | "variant";
   segments: string[]; source_take?: string;
@@ -35,7 +36,7 @@ function Note({ value, disabled, save }: { value: string; disabled: boolean; sav
 }
 
 export function TakesPanel({ clip, voice, segment, segments, marked, saved }: Props) {
-  const [workspace, setWorkspace] = useState<Workspace>({ jobs: [], selections: [] });
+  const [workspace, setWorkspace] = useState<Workspace>({ jobs: [], selections: [], recoveries: [] });
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
@@ -45,11 +46,16 @@ export function TakesPanel({ clip, voice, segment, segments, marked, saved }: Pr
   const [slotB, setSlotB] = useState("");
   const [playing, setPlaying] = useState("");
   const [problemsOnly, setProblemsOnly] = useState(false);
+  const [includeSuspect, setIncludeSuspect] = useState(false);
+  const [retryRecovery, setRetryRecovery] = useState<RecoveryCommand | null>(null);
   const player = useRef<HTMLAudioElement>(null);
   const requestSeq = useRef(0);
   const via = "clips/" + clip.id;
   const jobs = workspace.jobs;
-  const inProgress = jobs.some((job) => pending(job) || qcPending(job.qc));
+  const inProgress = jobs.some((job) => pending(job) || qcPending(job.qc)) ||
+    workspace.recoveries.some((run) => run.items.some((item) => item.state === "active"));
+  const activeSources = new Set(workspace.recoveries.flatMap((run) =>
+    run.items.filter((item) => item.state === "active").map((item) => item.source_id)));
 
   const refresh = useCallback(async () => {
     const seq = ++requestSeq.current;
@@ -94,8 +100,9 @@ export function TakesPanel({ clip, voice, segment, segments, marked, saved }: Pr
   const b = takes.find((job) => job.id === slotB && job.id !== a?.id) ?? takes.find((job) => job.id !== a?.id);
   const targets = marked.length ? marked : segment ? [segment.segment_id] : [];
   const enabled = Boolean(voice && saved && !busy);
-  const groupIds = [...new Set(jobs.filter(pending).map((job) => job.generation_id))];
-  const lastJob = jobs[0];
+  const groupIds = [...new Set(jobs.filter((job) => pending(job) && !job.request.recovery)
+    .map((job) => job.generation_id))];
+  const lastJob = jobs.find((job) => !job.request.recovery);
   if (lastJob && !groupIds.includes(lastJob.generation_id)) groupIds.push(lastJob.generation_id);
 
   async function action(run: () => Promise<void>) {
@@ -134,6 +141,28 @@ export function TakesPanel({ clip, voice, segment, segments, marked, saved }: Pr
       segments: mode === "missing" ? [] : source?.segment_id ? [source.segment_id] : targets,
       ...(source && { source_take: source.id }),
     });
+  }
+
+  function recover(command: RecoveryCommand) {
+    void action(async () => {
+      try {
+        await api(via + "/recoveries", json(command));
+        setRetryRecovery(null);
+      } catch (cause) {
+        setRetryRecovery(cause instanceof HttpError && cause.status < 500 ? null : command);
+        throw cause;
+      }
+    });
+  }
+
+  function startRecovery(source?: Take) {
+    recover({ revision: clip.revision, key: crypto.randomUUID(), include_suspect: includeSuspect,
+      ...(source && { source_take: source.id }) });
+  }
+
+  function canRecover(take: Take) {
+    return take.qc?.state === "complete" && (take.qc.report?.status === "likely_defect" ||
+      (includeSuspect && take.qc.report?.status === "suspect"));
   }
 
   function select(take: string, version: number) {
@@ -180,6 +209,19 @@ export function TakesPanel({ clip, voice, segment, segments, marked, saved }: Pr
     {notice && <p role="status">{notice}</p>}
     {networkError && <p role="alert">Связь с сервером прервана.</p>}
     {retry && <button className="subtle" disabled={busy} onClick={() => send(retry)}>Повторить отправку</button>}
+    {voice && currentTakes.some((take) => take.qc?.report?.status === "likely_defect" ||
+        take.qc?.report?.status === "suspect") && <div className="actions recovery-options">
+      <button type="button" className="subtle" disabled={!enabled} onClick={() => startRecovery()}>
+        Восстановить проблемные сегменты
+      </button>
+      <label><input type="checkbox" checked={includeSuspect} onChange={(event) => setIncludeSuspect(event.target.checked)}/>
+        Включить сомнительные</label>
+    </div>}
+    {retryRecovery && <button className="subtle" disabled={busy}
+      onClick={() => recover(retryRecovery)}>Повторить отправку восстановления</button>}
+    <RecoveryRuns runs={workspace.recoveries} disabled={busy} cancel={(id) => void action(async () => {
+      await api("recoveries/" + id + "/cancel", {method: "POST"});
+    })}/>
     {groupIds.map((id) => {
       const group = id ? jobs.filter((job) => job.generation_id === id) : lastJob ? [lastJob] : [];
       const active = group.find((job) => job.state === "running") ?? group.find(pending);
@@ -233,6 +275,7 @@ export function TakesPanel({ clip, voice, segment, segments, marked, saved }: Pr
             <h3>{title}{problemsOnly && " · " + take.request.text}</h3>
             <p>{selected && "Выбран · "}{decisions[reviewState.decision]} · seed {take.request.seed}</p>
           </div>
+          {take.request.recovery && <p className="recovery-reason">{strategyName(take.request.recovery.strategy)}</p>}
           <div className="actions">
             <button className="subtle" onClick={() => play(take, title)}>Слушать</button>
             <button className="subtle" disabled={selected || !enabled} onClick={() => select(take.id, entry?.version ?? 0)}>Выбрать</button>
@@ -240,6 +283,8 @@ export function TakesPanel({ clip, voice, segment, segments, marked, saved }: Pr
               onClick={() => select(take.id, entry.version)}>Вернуть предыдущий</button>}
             <button className="subtle" disabled={!enabled} onClick={() => generate("repeat", take)}>Повторить параметры</button>
             <button className="subtle" disabled={!enabled} onClick={() => generate("variant", take)}>Новый вариант</button>
+            {canRecover(take) && <button className="subtle" disabled={!enabled || activeSources.has(take.id)}
+              onClick={() => startRecovery(take)}>Восстановить дубль</button>}
           </div>
           {take.qc && <QcDetails qc={take.qc} disabled={busy} recheck={() => recheck(take)}/>}
           <details className="take-review">

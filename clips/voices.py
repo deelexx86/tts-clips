@@ -9,6 +9,7 @@ from uuid import uuid4
 
 from .audio import Assets, normalize_reference
 from .qc import QualityControl
+from .recovery import Recovery, SCHEMA as RECOVERY_SCHEMA
 from .takes import Takes, choose_first, migrate
 from .vox import Cancelled
 
@@ -42,6 +43,7 @@ class VoiceJobs:
         self.store = store
         self.takes = Takes(self)
         self.qc = QualityControl(self, recognizer)
+        self.recovery = Recovery(self)
         self.assets = Assets(store.path.with_suffix(".audio"))
         self.client = client
         self.queue = Queue()
@@ -51,12 +53,15 @@ class VoiceJobs:
     def start(self):
         with closing(self.store.connect()) as conn, conn:
             conn.executescript(SCHEMA)
+            conn.executescript(RECOVERY_SCHEMA)
             migrate(conn)
             conn.execute("""
                 UPDATE voice_job SET state='interrupted', phase=NULL
-                WHERE state IN ('queued', 'running')
+                WHERE state='running' OR (state='queued' AND
+                    NOT EXISTS (SELECT 1 FROM recovery_attempt WHERE job_id=voice_job.id))
             """)
         self.qc.start()
+        self.recovery.resume()
         self.thread.start()
 
     def close(self):
@@ -117,7 +122,10 @@ class VoiceJobs:
                 UPDATE voice_job SET state='cancelled', phase=NULL
                 WHERE id=? AND state IN ('queued','running')
             """, (job_id,))
-            return self.find(conn, job_id)
+            job = self.find(conn, job_id)
+        if "recovery" in job["request"]:
+            self.recovery.advance(job_id)
+        return job
 
     def voices(self):
         with closing(self.store.connect()) as conn:
@@ -151,7 +159,8 @@ class VoiceJobs:
             if changed and state == "ready":
                 job = self.find(conn, job_id)
                 if job["kind"] == "segment":
-                    choose_first(conn, job)
+                    if "recovery" not in job["request"]:
+                        choose_first(conn, job)
                     self.qc.enqueue(conn, job_id)
                     check_queued = True
         if check_queued:
@@ -167,6 +176,7 @@ class VoiceJobs:
                 if not self.change(job_id, "running", prior="queued"):
                     continue
                 self.execute(job_id)
+                self.recovery.advance(job_id)
         finally:
             self.client.close()
 
@@ -179,10 +189,13 @@ class VoiceJobs:
             request = job["request"]
             reference = self.assets.read(request["reference"]["sha256"]) if "reference" in request else None
             controls = {key: request[key] for key in ("text", "description", "seed")}
-            data, receipt = self.client.generate(
-                job_id, controls, reference,
-                lambda phase: self.change(job_id, "running", phase=phase), cancelled,
-            )
+            def progress(phase):
+                self.change(job_id, "running", phase=phase)
+
+            if "recovery" in request:
+                data, receipt = self.recovery.synthesize(job, controls, reference, progress, cancelled)
+            else:
+                data, receipt = self.client.generate(job_id, controls, reference, progress, cancelled)
             if cancelled():
                 raise Cancelled()
             asset = self.assets.publish(data)

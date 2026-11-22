@@ -36,6 +36,13 @@ class SelectionRequest(BaseModel):
     version: int = Field(ge=0)
 
 
+class RecoveryRequest(BaseModel):
+    revision: str
+    key: str = Field(min_length=1, max_length=128)
+    source_take: str | None = None
+    include_suspect: bool = False
+
+
 class ReviewRequest(BaseModel):
     listened: bool | None = None
     decision: Literal["pending", "accepted", "rejected"] | None = None
@@ -129,6 +136,26 @@ def voice_router(jobs):
             raise HTTPException(404, "Дубль или WAV не найден.") from None
         except CommandConflict as error:
             raise HTTPException(409, str(error)) from error
+
+    @router.post("/clips/{clip_id}/recoveries", status_code=202)
+    def recover(clip_id: str, body: RecoveryRequest):
+        try:
+            return jobs.recovery.begin(clip_id, body.model_dump())
+        except KeyError:
+            raise HTTPException(404, "Клип или дубль не найден.") from None
+        except Conflict as error:
+            return JSONResponse({"current": error.current}, status_code=409)
+        except CommandConflict as error:
+            raise HTTPException(409, str(error)) from error
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from error
+
+    @router.post("/recoveries/{run_id}/cancel")
+    def cancel_recovery(run_id: str):
+        try:
+            return jobs.recovery.cancel(run_id)
+        except KeyError:
+            raise HTTPException(404, "Восстановление не найдено.") from None
 
     @router.patch("/clips/{clip_id}/takes/{take_id}/review")
     def review(clip_id: str, take_id: str, body: ReviewRequest):

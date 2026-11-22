@@ -12,7 +12,7 @@ from .completion import POLICY, edge_dbfs
 from .speech_ready import require_preparation
 from .store import Conflict
 from .takes import MAX_SEED, CommandConflict, current_material, selection
-from .text import SENTENCE, digest
+from .text import LEGACY_POLICY, SENTENCE, digest, sentence_ends
 from .vox import Cancelled
 
 RULES = "books-recovery-v1"
@@ -52,10 +52,10 @@ CREATE TABLE IF NOT EXISTS recovery_part (
 """
 
 
-def split_at_sentence(text):
+def split_at_sentence(text, policy=LEGACY_POLICY):
     # From TTS Books b553710. Only consider sentence edges in the middle 40%.
-    boundaries = [m.end() for m in SENTENCE.finditer(text)
-                  if 0.30 * len(text) <= m.end() <= 0.70 * len(text)]
+    ends = (match.end() for match in SENTENCE.finditer(text)) if policy == LEGACY_POLICY else sentence_ends(text)
+    boundaries = [end for end in ends if 0.30 * len(text) <= end <= 0.70 * len(text)]
     return min(boundaries, key=lambda index: abs(index - len(text) / 2), default=None)
 
 
@@ -227,7 +227,8 @@ class Recovery:
             elif entry["strategy"] == "split":
                 self.finish(conn, entry["id"], "exhausted", "attempts_exhausted")
             else:
-                cut = split_at_sentence(take["request"]["text"])
+                policy = conn.execute("SELECT policy FROM revision WHERE id=?", (take["revision_id"],)).fetchone()[0]
+                cut = split_at_sentence(take["request"]["text"], policy)
                 if cut is None:
                     self.finish(conn, entry["id"], "exhausted", "no_sentence_boundary")
                 else:

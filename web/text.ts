@@ -1,10 +1,22 @@
 export type Edit = { start: number; end: number; text: string };
 export type Range = [number, number];
 
+export function editorText(text: string): string {
+  return text.replace(/\r\n?/g, "\n");
+}
+
 // Server offsets count Unicode code points. Textarea selection counts UTF-16 units.
 export function editorRange(points: string[], start: number, end: number): Range {
-  const offset = points.slice(0, start).join("").length;
-  return [offset, offset + points.slice(start, end).join("").length];
+  const offset = (index: number) => editorText(points.slice(0, index).join("")).length;
+  return [offset(start), offset(end)];
+}
+
+// A displayed newline may occupy two code points in the saved source.
+export function sourceEdit(source: string, edit: Edit): Edit {
+  if (!source.includes("\r\n")) return edit;
+  const units = source.match(/\r\n|[\s\S]/gu) ?? [];
+  const offset = (index: number) => index + units.slice(0, index).filter((unit) => unit === "\r\n").length;
+  return { ...edit, start: offset(edit.start), end: offset(edit.end) };
 }
 
 export function replacement(before: string, after: string, selected?: Range): Edit {

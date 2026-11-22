@@ -13,7 +13,7 @@ from .export_api import export_router
 from .exports import Exports
 from .speech_ready import warnings_for
 from .store import Conflict, KEEP_VOICE, Store
-from .text import Edit
+from .text import Edit, LEGACY_POLICY, segment
 from .voice_api import voice_router
 from .voices import VoiceJobs
 from .vox import VoxClient
@@ -28,15 +28,21 @@ class Replacement(BaseModel):
     text: str
 
 
-class ClipPatch(BaseModel):
+class RevisionBase(BaseModel):
     base_revision: str
+
+
+class ClipPatch(RevisionBase):
     title: str | None = Field(default=None, max_length=120)
     edits: list[Replacement] = Field(default_factory=list)
     voice_id: str | None = None
 
 
 def editor_snapshot(clip):
-    return {**clip, "speech_ready": warnings_for(clip["text"])}
+    upgrade_count = None
+    if clip["policy"] == LEGACY_POLICY:
+        upgrade_count = sum(span.segment_id is not None for span in segment(clip["text"]))
+    return {**clip, "speech_ready": warnings_for(clip["text"]), "segmentation_upgrade_count": upgrade_count}
 
 
 def create_app(database: Path | None = None, vox: VoxClient | None = None,
@@ -86,6 +92,15 @@ def create_app(database: Path | None = None, vox: VoxClient | None = None,
             raise HTTPException(404, "Клип не найден.") from None
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
+
+    @app.post("/api/clips/{clip_id}/segmentation-upgrade")
+    def upgrade_segmentation(clip_id: str, body: RevisionBase):
+        try:
+            return editor_snapshot(store.upgrade_segmentation(clip_id, body.base_revision))
+        except Conflict as exc:
+            return JSONResponse({"current": editor_snapshot(exc.current)}, status_code=409)
+        except KeyError:
+            raise HTTPException(404, "Клип не найден.") from None
 
     dist = ROOT / "dist"
     app.mount("/assets", StaticFiles(directory=dist / "assets", check_dir=False), name="assets")

@@ -12,6 +12,7 @@ from clips.main import create_app
 from clips.completion import Transcript, check
 from clips.vox import Cancelled, VoxClient
 from clips.whisper import Interrupted
+from test_clips import legacy_clip
 
 
 def tone():
@@ -94,15 +95,16 @@ def test_design_clone_playback_and_restart(tmp_path, fake_worker):
         clip_url = f"/api/clips/{draft['id']}"
         ready = client.patch(clip_url, json={
             "base_revision": draft["revision"], "voice_id": second["id"],
-            "edits": [{"start": 0, "end": 0, "text": "One.\nTwo."}],
+            "edits": [{"start": 0, "end": 0, "text": "One.\r\nTwo."}],
         }).json()
         job_url = clip_url + "/generations"
-        payload = {"revision": ready["revision"], "segments": [ready["spans"][2]["segment_id"]],
+        payload = {"revision": ready["revision"], "segments": [ready["spans"][0]["segment_id"]],
                    "mode": "selected", "key": "initial"}
         assert client.post(job_url, json={**payload, "revision": draft["revision"]}).status_code == 409
         batch = client.post(job_url, json=payload).json()
         built = await_job(client, batch["jobs"][0]["id"])
-        assert built["request"]["text"] == "Two."
+        assert built["request"]["text"] == "One.\r\nTwo."
+        assert built["text_hash"] == hashlib.sha256(b"One.\r\nTwo.").hexdigest()
         assert built["result"]["reference_sha256"] == key
         assert client.post(job_url, json=payload).json()["jobs"] == [built]
         response = client.get(f"/api/audio/{key}", headers={"Range": "bytes=0-43"})
@@ -165,10 +167,10 @@ class ControlledVox:
         pass
 
 
-def setup_clip(client, text):
+def setup_clip(client, text, *, legacy_db=None):
     preview = wait(client, client.post("/api/previews/design", json={"description": "Calm", "text": "Probe"}))
     voice = client.post("/api/voices", json={"preview_id": preview["id"], "name": "Voice"}).json()
-    clip = client.post("/api/clips").json()
+    clip = client.post("/api/clips").json() if legacy_db is None else legacy_clip(legacy_db)
     url = "/api/clips/" + clip["id"]
     ready = client.patch(url, json={
         "base_revision": clip["revision"], "voice_id": voice["id"],
@@ -188,7 +190,7 @@ def batch(client, url, clip, key, mode="missing", segments=(), **extra):
 def test_doubles_review_and_idempotency_survive_restart(tmp_path, fake_worker):
     db = tmp_path / "clips.sqlite3"
     with TestClient(create_app(db, VoxClient(fake_worker))) as client:
-        url, clip, targets = setup_clip(client, "One.\nTwo.\nThree.")
+        url, clip, targets = setup_clip(client, "One.\nTwo.\nThree.", legacy_db=db)
         initial = batch(client, url, clip, "initial")
         first = [await_job(client, j["id"]) for j in initial["jobs"]]
         choice_before = client.get(url + "/takes").json()["selections"]
@@ -234,8 +236,9 @@ def test_doubles_review_and_idempotency_survive_restart(tmp_path, fake_worker):
 
 def test_edit_during_synthesis_leaves_stale_take_and_keeps_other_choices(tmp_path):
     vox = ControlledVox()
-    with TestClient(create_app(tmp_path / "clips.sqlite3", vox)) as client:
-        url, clip, (lead, old, end) = setup_clip(client, "Lead.\nHold.\nEnd.")
+    db = tmp_path / "clips.sqlite3"
+    with TestClient(create_app(db, vox)) as client:
+        url, clip, (lead, old, end) = setup_clip(client, "Lead.\nHold.\nEnd.", legacy_db=db)
         queued = batch(client, url, clip, "all")
         first, holding, last = queued["jobs"]
         assert vox.entered.wait(4)
@@ -261,7 +264,7 @@ def test_partial_batch_preserves_completed_items(tmp_path, stop):
     vox = ControlledVox()
     with TestClient(create_app(db, vox)) as client:
         middle = "Fail." if stop == "failure" else "Hold."
-        url, clip, targets = setup_clip(client, f"Lead.\n{middle}\nEnd.")
+        url, clip, targets = setup_clip(client, f"Lead.\n{middle}\nEnd.", legacy_db=db)
         initial = batch(client, url, clip, "all")
         lead, next_job, end = initial["jobs"]
         first = await_job(client, lead["id"])

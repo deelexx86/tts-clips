@@ -1,0 +1,36 @@
+[Unit]
+Description=TTS Clips editor and local speech workers
+After=network.target
+ConditionPathExists=/var/lib/tts-clips-runtime/@VERSION@/ready
+
+[Service]
+Type=simple
+User=tts-clips
+Group=tts-clips
+WorkingDirectory=/usr/share/tts-clips
+StateDirectory=tts-clips
+StateDirectoryMode=0700
+CacheDirectory=tts-clips
+CacheDirectoryMode=0700
+Environment=PATH=/usr/local/bin:/usr/bin
+Environment=TTS_CLIPS_DB=/var/lib/tts-clips/clips.sqlite3
+Environment=TTS_CLIPS_VOX_PYTHON=/var/lib/tts-clips-runtime/@VERSION@/venv/bin/python
+Environment=TTS_CLIPS_VOX_MODEL=/var/lib/tts-clips-runtime/models/voxcpm2-@VOX_REV@
+Environment=TTS_CLIPS_WHISPER_PYTHON=/var/lib/tts-clips-runtime/@VERSION@/venv/bin/python
+Environment=TTS_CLIPS_WHISPER_MODEL=/var/lib/tts-clips-runtime/models/whisper-small-@WHISPER_REV@
+Environment=HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 PYTHONDONTWRITEBYTECODE=1 PYTHONUTF8=1 PYTHONUNBUFFERED=1
+Environment=XDG_CACHE_HOME=/var/cache/tts-clips NUMBA_CACHE_DIR=/var/cache/tts-clips/numba
+EnvironmentFile=-/etc/tts-clips/tts-clips.env
+ExecStart=/var/lib/tts-clips-runtime/@VERSION@/venv/bin/python -m uvicorn clips.main:create_app --factory --host 127.0.0.1 --port 8765 --workers 1 --proxy-headers --forwarded-allow-ips 127.0.0.1 --no-access-log --timeout-graceful-shutdown 90
+Restart=on-failure
+RestartSec=3s
+TimeoutStopSec=120s
+KillMode=mixed
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+
+[Install]
+WantedBy=multi-user.target

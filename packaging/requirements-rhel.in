@@ -1,0 +1,8 @@
+-r ../requirements.txt
+-r ../requirements-whisper.txt
+huggingface-hub==0.36.0
+numpy==2.2.6
+ctranslate2==4.9.0
+tokenizers==0.22.2
+# PyAV 16 provides Python 3.12 wheels compatible with EL9 glibc.
+av==16.1.0

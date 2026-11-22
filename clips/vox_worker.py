@@ -29,6 +29,9 @@ class Vox:
         import torch
         from voxcpm import VoxCPM
 
+        if not torch.cuda.is_available():
+            raise RuntimeError("VoxCPM2 требует доступный NVIDIA GPU и PyTorch с CUDA.")
+
         receipt = json.loads((directory / "tts-books-model.json").read_text("utf-8"))
         dist = importlib.metadata.distribution("voxcpm")
         commit = json.loads(dist.read_text("direct_url.json") or "{}").get("vcs_info", {}).get("commit_id")

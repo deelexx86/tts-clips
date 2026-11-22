@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { replacement, type Edit, type Range } from "./text";
+import { VoicePanel } from "./voice";
 import "./style.css";
 
 type Summary = { id: string; title: string; updated_at: string };
-type Span = { start: number; end: number; segment_id: string | null };
-type Snapshot = Summary & { revision: string; text: string; spans: Span[] };
+type Span = { start: number; end: number; segment_id: string | null; text_sha256: string };
+type Snapshot = Summary & { revision: string; text: string; spans: Span[]; voice_id: string | null };
 type SaveState = "saved" | "pending" | "saving" | "error" | "conflict";
 
 const stateLabel: Record<SaveState, string> = {
@@ -24,6 +25,7 @@ function App() {
   const [clip, setClip] = useState<Snapshot | null>(null);
   const [text, setText] = useState("");
   const [title, setTitle] = useState("");
+  const [voice, setVoice] = useState<string | null>(null);
   const [status, setStatus] = useState<SaveState>("saved");
   const [conflict, setConflict] = useState<Snapshot | null>(null);
   const [active, setActive] = useState<string | null>(null);
@@ -38,7 +40,7 @@ function App() {
   const timer = useRef<number | undefined>(undefined);
   const saved = useRef<Snapshot | null>(null);
   const pending = useRef<Edit[]>([]);
-  const draft = useRef({ text: "", title: "" });
+  const draft = useRef({ text: "", title: "", voice: null as string | null });
   const latestTitle = useRef("");
   const inFlight = useRef<Promise<boolean> | null>(null);
   const competing = useRef<Snapshot | null>(null);
@@ -55,10 +57,11 @@ function App() {
     competing.current = null;
     pending.current = [];
     latestTitle.current = snapshot.title;
-    draft.current = { text: snapshot.text, title: snapshot.title };
+    draft.current = { text: snapshot.text, title: snapshot.title, voice: snapshot.voice_id };
     setClip(snapshot);
     setText(snapshot.text);
     setTitle(snapshot.title);
+    setVoice(snapshot.voice_id);
     setConflict(null);
     setStatus("saved");
     setActive(null);
@@ -84,7 +87,8 @@ function App() {
   }
 
   function dirty() {
-    return pending.current.length > 0 || draft.current.title !== latestTitle.current;
+    return pending.current.length > 0 || draft.current.title !== latestTitle.current ||
+      (saved.current !== null && draft.current.voice !== saved.current.voice_id);
   }
 
   function persist(): Promise<boolean> {
@@ -95,13 +99,14 @@ function App() {
     if (!base || !dirty()) return Promise.resolve(true);
     const edits = pending.current.slice();
     const titleSent = draft.current.title;
+    const voiceSent = draft.current.voice;
     setStatus("saving");
     inFlight.current = (async () => {
       try {
         const response = await fetch("/api/clips/" + base.id, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ base_revision: base.revision, title: titleSent, edits }),
+          body: JSON.stringify({ base_revision: base.revision, title: titleSent, edits, voice_id: voiceSent }),
         });
         if (response.status === 409) {
           const { current } = await response.json() as { current: Snapshot };
@@ -195,6 +200,7 @@ function App() {
       draft.current = local;
       setText(local.text);
       setTitle(local.title);
+      setVoice(local.voice);
       if (dirty()) void persist();
     }
     textarea.current?.focus();
@@ -306,6 +312,13 @@ function App() {
                 <button className="primary" onClick={() => resolveConflict(true)}>Сохранить мой черновик</button>
               </div>
             </section>}
+            <VoicePanel key={clip.id} clip={clip} voice={voice} segment={segments.find((span) => span.segment_id === active) ?? null}
+              saved={status === "saved" && !loading} selectVoice={(id) => {
+                draft.current.voice = id;
+                setVoice(id);
+                if (!competing.current) setStatus("pending");
+                schedule();
+              }}/>
             <div className="editor-grid">
               <section className="editor" aria-labelledby="text-heading">
                 <div className="pane-head">

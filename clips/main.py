@@ -1,5 +1,6 @@
 """Serve the editor and its local HTTP API from one origin."""
 
+from contextlib import asynccontextmanager
 import os
 from pathlib import Path
 
@@ -8,8 +9,11 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from .store import Conflict, Store
+from .store import Conflict, KEEP_VOICE, Store
 from .text import Edit
+from .voice_api import voice_router
+from .voices import VoiceJobs
+from .vox import VoxClient
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -24,11 +28,23 @@ class ClipPatch(BaseModel):
     base_revision: str
     title: str | None = Field(default=None, max_length=120)
     edits: list[Replacement] = Field(default_factory=list)
+    voice_id: str | None = None
 
 
-def create_app(database: Path | None = None) -> FastAPI:
+def create_app(database: Path | None = None, vox: VoxClient | None = None) -> FastAPI:
     store = Store(database or Path(os.environ.get("TTS_CLIPS_DB", ROOT / "data" / "clips.sqlite3")))
-    app = FastAPI(title="TTS Clips")
+    jobs = VoiceJobs(store, vox or VoxClient.configured())
+
+    @asynccontextmanager
+    async def lifespan(app):
+        jobs.start()
+        try:
+            yield
+        finally:
+            jobs.close()
+
+    app = FastAPI(title="TTS Clips", lifespan=lifespan)
+    app.include_router(voice_router(jobs))
 
     @app.get("/api/clips")
     def list_clips():
@@ -50,7 +66,7 @@ def create_app(database: Path | None = None) -> FastAPI:
         try:
             return store.update(clip_id, body.base_revision, body.title, [
                 Edit(edit.start, edit.end, edit.text) for edit in body.edits
-            ])
+            ], body.voice_id if "voice_id" in body.model_fields_set else KEEP_VOICE)
         except Conflict as exc:
             return JSONResponse({"current": exc.current}, status_code=409)
         except KeyError:

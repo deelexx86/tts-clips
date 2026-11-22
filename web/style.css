@@ -63,7 +63,7 @@ textarea, .ruler {
 textarea { display: block; border: 0; border-radius: 0 0 0 12px; background: transparent; width: 100%; height: clamp(360px, 58vh, 820px); resize: vertical; }
 textarea::placeholder { color: #697568; }
 textarea::selection { background: #cbe3cb; color: #16251c; }
-.ruler { position: absolute; top: 0; visibility: hidden; pointer-events: none; }
+.ruler { position: absolute; top: 0; left: 0; max-width: 100%; visibility: hidden; pointer-events: none; }
 .segments ol { max-height: clamp(360px, 58vh, 820px); overflow: auto; padding: 5px 10px; }
 .segments li + li { border-top: 1px solid var(--line); }
 .segments li button { display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 9px; width: 100%; text-align: left; border: 0; border-radius: 5px; background: transparent; padding: 12px 8px; font-size: 14px; line-height: 1.45; overflow-wrap: anywhere; }
@@ -79,6 +79,30 @@ textarea::selection { background: #cbe3cb; color: #16251c; }
 .notice p, .notice details, .notice .actions { margin-top: 10px; }
 .notice pre { font: inherit; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 14rem; overflow: auto; }
 .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.voice-workspace { border-block: 1px solid var(--line); margin-bottom: 18px; }
+.voice-bar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; padding: 10px 0; }
+.voice-select { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; flex: 1; }
+.voice-workspace select, .voice-studio input:not([type="radio"]) {
+  display: block; max-width: 100%; min-height: 38px; padding: 6px 9px;
+  border: 1px solid var(--line); border-radius: 6px; background: var(--paper);
+  color: inherit; font: inherit;
+}
+.voice-select select { width: min(220px, 100%); }
+.voice-studio {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px;
+  padding: 16px; background: var(--paper); border: 1px solid var(--line); border-radius: 9px;
+}
+.voice-studio fieldset { border: 0; min-width: 0; padding: 0; margin: 0; }
+.voice-studio legend { font-weight: 700; font-size: 15px; padding: 0; }
+.voice-studio form label, .voice-preview > label { display: grid; grid-template-columns: minmax(0, 1fr); gap: 5px; margin: 10px 0; font-size: 14px; }
+.voice-studio .voice-modes { display: flex; flex-wrap: wrap; gap: 14px; }
+.voice-studio .voice-modes label { display: flex; align-items: center; gap: 4px; }
+.voice-studio .seed { width: 115px; }
+.voice-workspace audio { display: block; width: min(100%, 445px); margin: 6px 0 10px; }
+.voice-preview p, .segment-audio p, .voice-activity, .voice-error { font-size: 13px; color: var(--muted); }
+.segment-audio { border-top: 1px solid var(--line); padding-bottom: 10px; }
+.voice-activity { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 4px 0; }
+.voice-error, .voice-activity p { color: #963d24; overflow-wrap: anywhere; }
 @media (max-width: 950px) {
   .layout { grid-template-columns: 185px minmax(0, 1fr); }
   .editor-grid { grid-template-columns: minmax(0, 1fr) minmax(180px, .65fr); }
@@ -99,6 +123,7 @@ textarea::selection { background: #cbe3cb; color: #16251c; }
   .segments { border-left: none; border-top: 1px solid var(--line); border-radius: 0 0 12px 12px; }
   .segments ol { max-height: 45vh; }
   textarea { height: 38vh; min-height: 210px; border-radius: 0; }
+  .voice-studio { grid-template-columns: minmax(0, 1fr); }
 }
 @media (prefers-reduced-motion: reduce) {
   button { transition: none; }

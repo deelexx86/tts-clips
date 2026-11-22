@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS span (
 );
 """
 NOW = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"
+KEEP_VOICE = object()
 
 
 class Conflict(Exception):
@@ -49,6 +50,8 @@ class Store:
         with closing(self.connect()) as conn:
             conn.execute("PRAGMA journal_mode=WAL")
             conn.executescript(SCHEMA)
+            if "voice_id" not in {row["name"] for row in conn.execute("PRAGMA table_info(revision)")}:
+                conn.execute("ALTER TABLE revision ADD COLUMN voice_id TEXT")
 
     def connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.path)
@@ -73,7 +76,7 @@ class Store:
     def snapshot(conn: sqlite3.Connection, clip_id: str) -> dict:
         row = conn.execute("""
             SELECT c.id, c.updated_at, r.id AS revision, r.title, r.text,
-                   r.text_sha256, r.policy, r.language
+                   r.text_sha256, r.policy, r.language, r.voice_id
             FROM clip c JOIN revision r ON r.id = c.current_revision WHERE c.id = ?
         """, (clip_id,)).fetchone()
         if row is None:
@@ -91,27 +94,34 @@ class Store:
             self.publish(conn, clip_id, None, "", "", [])
             return self.snapshot(conn, clip_id)
 
-    def update(self, clip_id: str, base: str, title: str | None, edits: list[Edit]) -> dict:
+    def update(self, clip_id: str, base: str, title: str | None, edits: list[Edit],
+               voice_id=KEEP_VOICE) -> dict:
         with closing(self.connect()) as conn, conn:
             conn.execute("BEGIN IMMEDIATE")
             current = self.snapshot(conn, clip_id)
             if current["revision"] != base:
                 raise Conflict(current)
+            if voice_id is KEEP_VOICE:
+                voice_id = current["voice_id"]
+            elif voice_id is not None and not conn.execute(
+                "SELECT 1 FROM voice WHERE id=?", (voice_id,)
+            ).fetchone():
+                raise ValueError("Сохранённый голос не найден.")
             new_title = current["title"] if title is None else title
             old_spans = [
                 Span(row["start"], row["end"], row["segment_id"]) for row in current["spans"]
             ]
             text, spans = revise(current["text"], old_spans, edits)
-            if text == current["text"] and new_title == current["title"]:
+            if text == current["text"] and new_title == current["title"] and voice_id == current["voice_id"]:
                 return current
-            self.publish(conn, clip_id, base, new_title, text, spans)
+            self.publish(conn, clip_id, base, new_title, text, spans, voice_id)
             return self.snapshot(conn, clip_id)
 
     @staticmethod
-    def publish(conn, clip_id, parent, title, text, spans):
+    def publish(conn, clip_id, parent, title, text, spans, voice_id=None):
         revision = uuid4().hex
-        conn.execute("INSERT INTO revision VALUES (?, ?, ?, ?, ?, ?, ?, 'ru')",
-                     (revision, clip_id, parent, title, text, digest(text), POLICY))
+        conn.execute("INSERT INTO revision VALUES (?, ?, ?, ?, ?, ?, ?, 'ru', ?)",
+                     (revision, clip_id, parent, title, text, digest(text), POLICY, voice_id))
         conn.executemany("INSERT INTO span VALUES (?, ?, ?, ?, ?, ?)", [
             (revision, ordinal, span.start, span.end, span.segment_id,
              digest(text[span.start : span.end]) if span.segment_id else None)

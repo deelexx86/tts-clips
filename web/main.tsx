@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { replacement, type Edit, type Range } from "./text";
 import { VoicePanel } from "./voice";
 import { TakesPanel } from "./takes";
+import { ExportPanel } from "./export";
 import "./style.css";
 
 type Summary = { id: string; title: string; updated_at: string };
@@ -322,6 +323,11 @@ function App() {
                 setVoice(id);
                 if (!competing.current) setStatus("pending");
                 schedule();
+              }}/>
+            <ExportPanel key={"export-" + clip.id} clip={clip} saved={status === "saved" && !loading}
+              locate={(id) => {
+                const span = segments.find((item) => item.segment_id === id);
+                if (span) locate(span);
               }}/>
             <TakesPanel key={"takes-" + clip.id} clip={clip} voice={voice} segments={segments}
               segment={segments.find((span) => span.segment_id === active) ?? null}

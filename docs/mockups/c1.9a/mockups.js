@@ -4,6 +4,7 @@ const phrases = [
   { name: "Доступ к платформам", text: "К платформам ведёт крытая галерея. Для пассажиров с колясками работают два лифта." }
 ];
 const example = phrases.map(item => item.text).join("\n\n");
+const longExample = "Утренний поезд приходит к открытой платформе, когда в окнах станционного зала только загорается свет. Во время первой недели дежурные записывали вопросы пассажиров и отмечали места, где люди останавливались в поисках указателя. Эти наблюдения передали проектировщикам.\n\nПоезда ходят с шести утра до полуночи. В выходные дни интервалы между рейсами немного увеличиваются. О том, как устроен маршрут, рассказывают сотрудники станции. Вместе с корреспондентом они прошли весь путь от входных дверей до края платформы.\n\nК платформам ведёт крытая галерея, по которой пассажиры могут пройти от остановки даже в сильный дождь. Во время первой недели дежурные записывали вопросы пассажиров и отмечали места, где люди останавливались в поисках указателя. Эти наблюдения передали проектировщикам.\n\nУ центрального входа сохранили старые часы, которые много лет служили местом встречи перед отправлением. О том, как устроен маршрут, рассказывают сотрудники станции. Вместе с корреспондентом они прошли весь путь от входных дверей до края платформы.\n\nДля велосипедистов рядом с кассами оборудовали стоянку и оставили свободный проход к боковому входу. Во время первой недели дежурные записывали вопросы пассажиров и отмечали места, где люди останавливались в поисках указателя. Эти наблюдения передали проектировщикам.\n\nИз вестибюля хорошо видно табло отправления, поэтому пассажирам больше не приходится подходить к кассе. О том, как устроен маршрут, рассказывают сотрудники станции. Вместе с корреспондентом они прошли весь путь от входных дверей до края платформы.\n\nВечерние рейсы встречает дежурный сотрудник, который помогает найти нужный выход к автобусной остановке. Во время первой недели дежурные записывали вопросы пассажиров и отмечали места, где люди останавливались в поисках указателя. Эти наблюдения передали проектировщикам.\n\nПереход через пути перенесли в подземную галерею, связанную с платформой широким освещённым пандусом. О том, как устроен маршрут, рассказывают сотрудники станции. Вместе с корреспондентом они прошли весь путь от входных дверей до края платформы.\n\nЗал ожидания открывается до первого поезда, чтобы ранние пассажиры могли дождаться рейса в тепле. Во время первой недели дежурные записывали вопросы пассажиров и отмечали места, где люди останавливались в поисках указателя. Эти наблюдения передали проектировщикам.\n\nРядом с лестницей работает лифт, в который свободно помещаются детская коляска и сопровождающий взрослый. О том, как устроен маршрут, рассказывают сотрудники станции. Вместе с корреспондентом они прошли весь путь от входных дверей до края платформы.\n\nНа западной стороне станции обустроили небольшой сквер, откуда пешеходная дорожка ведёт к жилому кварталу. Во время первой недели дежурные записывали вопросы пассажиров и отмечали места, где люди останавливались в поисках указателя. Эти наблюдения передали проектировщикам.\n\nПосле последнего рейса сотрудники обходят платформы и проверяют освещение вдоль всего пассажирского маршрута. О том, как устроен маршрут, рассказывают сотрудники станции. Вместе с корреспондентом они прошли весь путь от входных дверей до края платформы.";
 const presets = {
   "Спокойный диктор": "Calm Russian narrator, clear articulation, measured pace.",
   "Спокойный репортаж": "Russian field reporter, warm conversational tone, natural pauses.",
@@ -13,9 +14,11 @@ const labels = { prep: "Подготовка", studio: "Озвучка", export:
 const stages = Object.keys(labels);
 const root = document.querySelector("#app");
 let concept, view, state, timer;
+let listOffset = 0;
 
 function reset(scene = "empty") {
   clearTimeout(timer);
+  listOffset = 0;
   view = scene === "export" ? "export" : scene === "work" ? "studio" : "prep";
   state = {
     name: scene === "empty" ? "Новый клип" : "Новая станция",
@@ -123,7 +126,7 @@ function inspector(items) {
   if (!row) return "";
   const isReview = items.length > 1 && i === 1;
   const playing = state.playing || (isReview ? state.current : 1);
-  return `<article id="segment-focus" tabindex="-1" class="inspector" aria-label="Активный сегмент">
+  return `<article id="segment-focus" data-segment-id="${i}" tabindex="-1" class="inspector" aria-label="Активный сегмент">
     <div class="inspector-top"><h3>Сегмент ${i + 1} из ${items.length} · ${escape(row.name)}</h3>
       ${button("К тексту", "back-text")}</div>
     <blockquote>${escape(row.text)}</blockquote>
@@ -147,7 +150,7 @@ function studio() {
     if (state.filter && needsReview() && i !== 1) return "";
     const status = !state.synthesized ? "Нет записи" : i === 1 && needsReview() ? "Требует прослушивания" : "Готов к экспорту";
     return `<li class="segment"><button class="segment-row" data-action="segment" data-segment="${i}" aria-pressed="${i === index}">
-      <span class="segment-index">${String(i + 1).padStart(2,"0")}</span><span><span class="segment-title">${escape(row.name)}</span>
+      <span class="segment-index">${String(i + 1).padStart(2,"0")}</span><span><span class="segment-title">${escape(concept === "a" ? row.text : row.name)}</span>
       <span class="segment-caption">${status}</span></span></button>
       ${concept === "b" && i === index ? inspector(items) : ""}</li>`;
   }).join("");
@@ -197,6 +200,10 @@ function exporting() {
 }
 
 function render(focus = "") {
+  const oldList = root.querySelector("#segment-list");
+  if (oldList && document.body.dataset.concept === "a") listOffset = oldList.scrollTop;
+  const oldInspector = root.querySelector("#segment-focus");
+  const inspectorOffset = oldInspector?.dataset.segmentId === String(state.selection) ? oldInspector.scrollTop : 0;
   document.body.dataset.concept = concept;
   document.querySelectorAll("[data-concept]").forEach(el => {
     if (el.tagName === "BUTTON") el.setAttribute("aria-pressed", el.dataset.concept === concept);
@@ -216,6 +223,20 @@ function render(focus = "") {
           `class="inline-stage-head" aria-expanded="${view === stage}" aria-controls="panel-${stage}"`)}
         <div id="panel-${stage}" ${view === stage ? "" : "hidden"}>${view === stage ? content[stage]() : ""}</div></section>`).join("")}
     </main>`;
+  if (concept === "a") {
+    const list = root.querySelector("#segment-list");
+    const inspector = root.querySelector("#segment-focus");
+    if (list) {
+      list.scrollTop = listOffset;
+      const current = list.querySelector('[aria-pressed="true"]');
+      if (current && list.clientHeight < list.scrollHeight) {
+        const item = current.getBoundingClientRect(), panel = list.getBoundingClientRect();
+        if (item.bottom > panel.bottom) list.scrollTop += item.bottom - panel.bottom;
+        if (item.top < panel.top) list.scrollTop += item.top - panel.top;
+      }
+    }
+    if (inspector) inspector.scrollTop = inspectorOffset;
+  }
   if (focus) document.querySelector(focus)?.focus({ preventScroll: false });
 }
 
@@ -229,7 +250,11 @@ function go(stage, focus = true) {
 function fromHash() {
   const [letter, scene] = location.hash.slice(1).split("/");
   concept = letter === "a" ? "a" : "b";
-  reset(!letter ? "work" : ["work", "prep", "export"].includes(scene) ? scene : "empty");
+  if (letter === "a" && scene === "long") {
+    reset("work");
+    state.text = longExample;
+    state.name = "Станция глазами пассажира";
+  } else reset(!letter ? "work" : ["work", "prep", "export"].includes(scene) ? scene : "empty");
   render();
 }
 window.addEventListener("hashchange", fromHash);
@@ -265,6 +290,7 @@ document.addEventListener("change", event => {
 document.addEventListener("click", event => {
   const el = event.target.closest("button");
   if (!el) return;
+  if (el.dataset.action === "long-demo") { location.hash = "a/long"; fromHash(); return; }
   if (el.dataset.concept) { concept = el.dataset.concept; render(); return; }
   const action = el.dataset.action;
   if (!action) return;

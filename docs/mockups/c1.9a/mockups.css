@@ -193,3 +193,54 @@ body[data-concept=b] {
 }
 body[data-concept=b] { min-height:100vh }
 body[data-concept=b] .save { color:#426552 }
+body:not([data-concept=a]) .long-demo { display:none }
+body[data-concept=a] {
+  --accent:#a32335; --ink:#202833; --muted:#566371; --line:#dce1e6; --paper:#fff;
+  --soft:#f9fafb; --tint:#f8eef0; background:#f3f4f6; min-height:100vh;
+  font:14px/1.48 "Segoe UI",Arial,sans-serif;
+  & .review {background:#191d23;padding-block:5px;gap:8px}
+  & .review button {min-height:28px;font-size:12px}
+  & .review button[aria-pressed=true] {background:#a32335;color:white;border-color:#a32335}
+  & .top-inner {min-height:42px;padding-block:4px}
+  & .wordmark {font-size:18px}
+  & .save {color:#426552}
+  & .workspace {max-width:1360px;padding-top:16px;padding-bottom:16px}
+  & .clip-header {margin-bottom:4px}
+  & .clip-name {font-size:24px;min-height:32px;width:min(100%,32ch)}
+  & button,& select,& input:not([type=checkbox]) {min-height:32px}
+  & button {font-size:13px;padding:4px 10px;border-radius:4px;font-weight:550}
+  & .stages {margin-bottom:10px;gap:15px}
+  & .stages button {min-height:38px;border-radius:0}
+  & .stage {border-radius:6px}
+  & .stage-head,& .stage-foot {padding:9px 16px}
+  & .stage-head h2 {font-size:17px}
+  & .stage-head p {margin-top:2px}
+  & .segment-list {padding:9px 10px 0;border-radius:0}
+  & .segment-row {padding:8px;line-height:1.4;border-radius:0}
+  & .segment-title {font-size:13px;font-weight:550;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  & .segment-caption {font-size:12px;margin-top:3px}
+  & .inspector {padding:14px 18px;gap:12px}
+  & .inspector-top h3 {font-size:15px}
+  & .inspector-top button {color:#175da1}
+  & .inspector blockquote {font:16px/1.6 "Segoe UI",Arial,sans-serif;max-width:70ch}
+  & .field-head {margin-bottom:6px}
+  & .player {border-radius:5px;padding:9px 12px}
+  & .take {padding:6px 0}
+  & .active-label {background:#edf1f5;color:#3c4957;padding:1px 5px;border-radius:3px}
+  & .prep>div,& .export-grid>div {padding:14px 16px}
+  & .stack {gap:8px;align-content:start}
+  & .script {font:15px/1.6 "Segoe UI",Arial,sans-serif;height:clamp(200px,44vh,540px)}
+  & .hint:not(.warn) {background:#f1f7f3;border-color:#498264}
+  & summary {padding-block:5px}
+}
+@media(min-width:701px) and (min-height:590px) {
+ body[data-concept=a] .studio {height:clamp(305px,calc(100dvh - 268px),840px);grid-template-columns:minmax(230px,.85fr) minmax(0,1.8fr)}
+ body[data-concept=a] .segment-list {display:flex;flex-direction:column;min-height:0}
+ body[data-concept=a] #segment-list,body[data-concept=a] .inspector {overflow-y:auto;overscroll-behavior-y:contain;scrollbar-gutter:stable;min-height:0}
+}
+@media(max-width:700px) {
+ body[data-concept=a] .workspace {padding:10px}
+ body[data-concept=a] .segment-list.show-all #segment-list {max-height:36dvh;overflow-y:auto}
+ body[data-concept=a] .inspector {padding:12px}
+ body[data-concept=a] .inspector button, body[data-concept=a] .stages button {min-height:38px}
+}

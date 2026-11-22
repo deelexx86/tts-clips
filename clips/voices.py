@@ -8,6 +8,7 @@ from threading import Event, Thread
 from uuid import uuid4
 
 from .audio import Assets, normalize_reference
+from .qc import QualityControl
 from .takes import Takes, choose_first, migrate
 from .vox import Cancelled
 
@@ -37,9 +38,10 @@ CREATE TABLE IF NOT EXISTS voice (
 
 
 class VoiceJobs:
-    def __init__(self, store, client):
+    def __init__(self, store, client, recognizer=None):
         self.store = store
         self.takes = Takes(self)
+        self.qc = QualityControl(self, recognizer)
         self.assets = Assets(store.path.with_suffix(".audio"))
         self.client = client
         self.queue = Queue()
@@ -54,12 +56,14 @@ class VoiceJobs:
                 UPDATE voice_job SET state='interrupted', phase=NULL
                 WHERE state IN ('queued', 'running')
             """)
+        self.qc.start()
         self.thread.start()
 
     def close(self):
         self.stopping.set()
         self.queue.put(None)
         self.thread.join()
+        self.qc.close()
 
     @staticmethod
     def find(conn, job_id):
@@ -138,6 +142,7 @@ class VoiceJobs:
             return {**dict(row), "reference": json.loads(row["reference"])}
 
     def change(self, job_id, state, *, prior="running", phase=None, result=None, error=None):
+        check_queued = False
         with closing(self.store.connect()) as conn, conn:
             changed = conn.execute("""
                 UPDATE voice_job SET state=?, phase=?, result=?, error=? WHERE id=? AND state=?
@@ -147,7 +152,11 @@ class VoiceJobs:
                 job = self.find(conn, job_id)
                 if job["kind"] == "segment":
                     choose_first(conn, job)
-            return changed
+                    self.qc.enqueue(conn, job_id)
+                    check_queued = True
+        if check_queued:
+            self.qc.wake.set()
+        return changed
 
     def run(self):
         try:

@@ -139,6 +139,20 @@ def voice_router(jobs):
         except ValueError as error:
             raise HTTPException(422, str(error)) from error
 
+    @router.get("/clips/{clip_id}/takes/{take_id}/qc")
+    def qc_history(clip_id: str, take_id: str):
+        try:
+            return jobs.qc.history(clip_id, take_id)
+        except KeyError:
+            raise HTTPException(404, "Дубль не найден.") from None
+
+    @router.post("/clips/{clip_id}/takes/{take_id}/qc", status_code=202)
+    def recheck(clip_id: str, take_id: str):
+        try:
+            return jobs.qc.submit(clip_id, take_id)
+        except KeyError:
+            raise HTTPException(404, "Дубль не найден.") from None
+
     @router.get("/audio-jobs/{job_id}")
     def job(job_id: str):
         try:

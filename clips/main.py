@@ -14,6 +14,7 @@ from .text import Edit
 from .voice_api import voice_router
 from .voices import VoiceJobs
 from .vox import VoxClient
+from .whisper import Whisper
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -31,9 +32,10 @@ class ClipPatch(BaseModel):
     voice_id: str | None = None
 
 
-def create_app(database: Path | None = None, vox: VoxClient | None = None) -> FastAPI:
+def create_app(database: Path | None = None, vox: VoxClient | None = None,
+               whisper: Whisper | None = None) -> FastAPI:
     store = Store(database or Path(os.environ.get("TTS_CLIPS_DB", ROOT / "data" / "clips.sqlite3")))
-    jobs = VoiceJobs(store, vox or VoxClient.configured())
+    jobs = VoiceJobs(store, vox or VoxClient.configured(), whisper or Whisper.configured())
 
     @asynccontextmanager
     async def lifespan(app):

@@ -9,7 +9,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 from clips.main import create_app
+from clips.completion import Transcript, check
 from clips.vox import Cancelled, VoxClient
+from clips.whisper import Interrupted
 
 
 def tone():
@@ -278,3 +280,115 @@ def test_partial_batch_preserves_completed_items(tmp_path, stop):
                 await_job(reopened, job["id"], "interrupted")
         retry = batch(reopened, url, clip, "retry")
         assert [j["segment_id"] for j in retry["jobs"]] == (targets[1:2] if stop == "failure" else targets[1:])
+
+
+@pytest.mark.parametrize(("heard", "status", "reason"), [
+    ("Поезд приехал на станцию ночью.", "verified", None),
+    ("Поезд приехал на станцию утром.", "suspect", "ending_mismatch"),
+    ("Поезд приехал.", "likely_defect", "ending_words_missing"),
+])
+def test_whisper_completion(heard, status, reason):
+    result = check("Поезд приехал на станцию ночью.", Transcript(heard, heard), bytes(960))
+    assert result.status == status
+    assert reason in result.reasons if reason else not result.reasons
+
+
+class ControlledWhisper:
+    def __init__(self, version="A", paused=False):
+        self.version = version
+        self.entered = Event()
+        self.release = Event()
+        if not paused:
+            self.release.set()
+        self.failure = False
+        self.calls = 0
+
+    def identity(self, stopping):
+        return {"model": self.version}
+
+    def transcribe(self, path, language, stopping):
+        assert path.read_bytes() == tone()
+        assert language == "ru"
+        self.calls += 1
+        self.entered.set()
+        while not self.release.wait(0.02):
+            if stopping():
+                raise Interrupted()
+        if self.failure:
+            raise RuntimeError("ASR unavailable")
+        return Transcript("Поезд приехал.", "Поезд приехал.")
+
+
+def qc_state(client, url, state):
+    deadline = monotonic() + 5
+    while monotonic() < deadline:
+        result = client.get(url).json()
+        if result["current"]["state"] == state:
+            return result
+        sleep(0.025)
+    pytest.fail(f"QC did not reach {state}: {result}")
+
+
+def test_automatic_qc_cache_failure_and_version_history(tmp_path):
+    database = tmp_path / "qc.sqlite3"
+    recognizer = ControlledWhisper(paused=True)
+    with TestClient(create_app(database, ControlledVox(), recognizer)) as client:
+        url, clip, segments = setup_clip(client, "Поезд приехал на станцию ночью.")
+        render = batch(client, url, clip, "first")["jobs"][0]
+        take = await_job(client, render["id"])
+        qc_url = url + "/takes/" + take["id"] + "/qc"
+        assert recognizer.entered.wait(4)
+        assert client.get(qc_url).json()["current"]["state"] == "running"
+        asset_url = "/api/audio/" + take["result"]["asset"]["sha256"]
+        assert client.get(asset_url).content == tone()
+        assert client.get(url + "/takes").json()["selections"][0]["current"] == take["id"]
+        recognizer.release.set()
+        original = qc_state(client, qc_url, "complete")["current"]["report"]
+        assert original["status"] == "likely_defect" and original["transcript"]["full"] == "Поезд приехал."
+        assert original["expected"] == clip["text"]
+        review_url = url + "/takes/" + take["id"] + "/review"
+        manual = {"listened": True, "decision": "accepted", "note": "Проверено на слух"}
+        assert client.patch(review_url, json=manual).json() == manual
+
+        assert client.post(qc_url).status_code == 202
+        cached = qc_state(client, qc_url, "complete")["current"]
+        assert cached["cached"] and cached["report"] == original and recognizer.calls == 1
+        repeat = batch(client, url, clip, "repeat", "repeat", segments, source_take=take["id"])["jobs"][0]
+        await_job(client, repeat["id"])
+        reused = qc_state(client, url + "/takes/" + repeat["id"] + "/qc", "complete")["current"]
+        assert reused["cached"] and reused["report"] == original and recognizer.calls == 1
+
+        recognizer.version = "B"
+        recognizer.failure = True
+        assert client.post(qc_url).status_code == 202
+        failed = qc_state(client, qc_url, "failed")["current"]
+        assert failed["report"] == original and failed["error"] == "ASR unavailable"
+        assert client.get(asset_url).content == tone()
+        recognizer.failure = False
+        assert client.post(qc_url).status_code == 202
+        revised = qc_state(client, qc_url, "complete")
+        assert len(revised["reports"]) == 2 and revised["current"]["report"]["id"] != original["id"]
+        assert client.get("/api/audio-jobs/" + take["id"]).json() == take
+
+    replacement = ControlledWhisper(version="B")
+    with TestClient(create_app(database, ControlledVox(), replacement)) as client:
+        assert client.get(qc_url).json() == revised
+        workspace = client.get(url + "/takes").json()
+        assert workspace["selections"][0]["current"] == take["id"]
+        assert next(row for row in workspace["jobs"] if row["id"] == take["id"])["review"] == manual
+        assert client.post(qc_url).status_code == 202
+        assert qc_state(client, qc_url, "complete")["current"]["cached"]
+        assert replacement.calls == 0
+
+
+def test_interrupted_qc_is_requeued_after_restart(tmp_path):
+    database = tmp_path / "qc.sqlite3"
+    recognizer = ControlledWhisper(paused=True)
+    with TestClient(create_app(database, ControlledVox(), recognizer)) as client:
+        url, clip, _ = setup_clip(client, "Поезд приехал на станцию ночью.")
+        render = batch(client, url, clip, "first")["jobs"][0]
+        await_job(client, render["id"])
+        qc_url = url + "/takes/" + render["id"] + "/qc"
+        assert recognizer.entered.wait(4)
+    with TestClient(create_app(database, ControlledVox(), ControlledWhisper())) as client:
+        assert qc_state(client, qc_url, "complete")["current"]["report"]["status"] == "likely_defect"

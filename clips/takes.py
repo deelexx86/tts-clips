@@ -110,6 +110,7 @@ class Takes:
                 if job["result"]:
                     job["result"] = {k: job["result"][k] for k in ("asset", "reused")}
                     job["review"] = review(conn, job["id"])
+                    job["qc"] = self.jobs.qc.snapshot(conn, job["id"])
                 jobs.append(job)
             selections = conn.execute("SELECT * FROM take_selection WHERE clip_id=?", (clip_id,))
             return {"jobs": jobs, "selections": [dict(row) for row in selections]}

@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { api, HttpError, json, pending, phases, states, type Job } from "./audio";
+import { hasProblem, QcDetails, qcPending, type QC } from "./qc";
 
 type Review = { listened: boolean; decision: "pending" | "accepted" | "rejected"; note: string };
-type Take = Job & { generation_id: string | null; review?: Review };
+type Take = Job & { generation_id: string | null; review?: Review; qc?: QC };
 type Choice = { clip_id: string; segment_id: string; text_hash: string; voice_id: string;
   current: string; previous: string | null; version: number };
 type Workspace = { jobs: Take[]; selections: Choice[] };
@@ -43,11 +44,12 @@ export function TakesPanel({ clip, voice, segment, segments, marked, saved }: Pr
   const [slotA, setSlotA] = useState("");
   const [slotB, setSlotB] = useState("");
   const [playing, setPlaying] = useState("");
+  const [problemsOnly, setProblemsOnly] = useState(false);
   const player = useRef<HTMLAudioElement>(null);
   const requestSeq = useRef(0);
   const via = "clips/" + clip.id;
   const jobs = workspace.jobs;
-  const inProgress = jobs.some(pending);
+  const inProgress = jobs.some((job) => pending(job) || qcPending(job.qc));
 
   const refresh = useCallback(async () => {
     const seq = ++requestSeq.current;
@@ -79,8 +81,11 @@ export function TakesPanel({ clip, voice, segment, segments, marked, saved }: Pr
 
   const finished = jobs.filter((job) => job.state === "ready" && job.result && job.review);
   const segmentHashes = new Map(segments.map((item) => [item.segment_id, item.text_sha256]));
-  const takes = finished.filter((job) => segment && job.segment_id === segment.segment_id &&
-    job.text_hash === segment.text_sha256 && job.voice_id === voice).reverse();
+  const currentTakes = finished.filter((job) => job.segment_id && job.voice_id === voice &&
+    segmentHashes.get(job.segment_id) === job.text_hash).reverse();
+  const takes = currentTakes.filter((job) => job.segment_id === segment?.segment_id);
+  const problems = currentTakes.filter((job) => hasProblem(job.qc));
+  const visible = problemsOnly ? problems : takes;
   const history = finished.filter((job) => job.voice_id !== voice || !job.segment_id ||
     segmentHashes.get(job.segment_id) !== job.text_hash);
   const choice = workspace.selections.find((item) => item.segment_id === segment?.segment_id &&
@@ -131,15 +136,21 @@ export function TakesPanel({ clip, voice, segment, segments, marked, saved }: Pr
     });
   }
 
-  function select(take: string) {
+  function select(take: string, version: number) {
     void action(async () => {
-      await api(via + "/take-selection", { ...json({ take_id: take, version: choice?.version ?? 0 }), method: "PUT" });
+      await api(via + "/take-selection", { ...json({ take_id: take, version }), method: "PUT" });
     });
   }
 
   function review(take: Take, fields: Partial<Review>) {
     return action(async () => {
       await api(via + "/takes/" + take.id + "/review", { ...json(fields), method: "PATCH" });
+    });
+  }
+
+  function recheck(take: Take) {
+    void action(async () => {
+      await api(via + "/takes/" + take.id + "/qc", { method: "POST" });
     });
   }
 
@@ -185,7 +196,12 @@ export function TakesPanel({ clip, voice, segment, segments, marked, saved }: Pr
         </details>}
       </div>;
     })}
-    {(takes.length > 0 || history.length > 0) && <div className="take-player">
+    {currentTakes.length > 0 && <label className="qc-filter">
+      <input type="checkbox" checked={problemsOnly} onChange={(event) => setProblemsOnly(event.target.checked)}/>
+      Проблемные дубли · {problems.length}
+    </label>}
+    {problemsOnly && !problems.length && <p>Проблемных дублей для текущего голоса нет.</p>}
+    {(visible.length > 0 || history.length > 0) && <div className="take-player">
       {takes.length > 1 && <div className="actions">
         {([["A", a, setSlotA], ["B", b, setSlotB]] as const).map(([label, job, setSlot]) =>
           <div className="take-compare" key={label}>
@@ -204,23 +220,28 @@ export function TakesPanel({ clip, voice, segment, segments, marked, saved }: Pr
       }}/>
       {playing && <p>{playing}</p>}
     </div>}
-    {takes.length > 0 && <div className="take-list">
-      {takes.map((take, index) => {
-        const selected = choice?.current === take.id;
+    {visible.length > 0 && <div className="take-list">
+      {visible.map((take) => {
+        const takeNumber = currentTakes.filter((item) => item.segment_id === take.segment_id).indexOf(take) + 1;
+        const title = "Дубль " + takeNumber;
+        const entry = workspace.selections.find((item) => item.segment_id === take.segment_id &&
+          item.text_hash === take.text_hash && item.voice_id === take.voice_id);
+        const selected = entry?.current === take.id;
         const reviewState = take.review!;
-        return <article key={take.id} aria-label={"Дубль " + (index + 1)}>
+        return <article key={take.id} aria-label={problemsOnly ? title + " · " + take.request.text : title}>
           <div className="voice-bar">
-            <h3>Дубль {index + 1}</h3>
+            <h3>{title}{problemsOnly && " · " + take.request.text}</h3>
             <p>{selected && "Выбран · "}{decisions[reviewState.decision]} · seed {take.request.seed}</p>
           </div>
           <div className="actions">
-            <button className="subtle" onClick={() => play(take, "Дубль " + (index + 1))}>Слушать</button>
-            <button className="subtle" disabled={selected || !enabled} onClick={() => select(take.id)}>Выбрать</button>
-            {choice?.previous === take.id && <button className="subtle" disabled={!enabled}
-              onClick={() => select(take.id)}>Вернуть предыдущий</button>}
+            <button className="subtle" onClick={() => play(take, title)}>Слушать</button>
+            <button className="subtle" disabled={selected || !enabled} onClick={() => select(take.id, entry?.version ?? 0)}>Выбрать</button>
+            {entry?.previous === take.id && <button className="subtle" disabled={!enabled}
+              onClick={() => select(take.id, entry.version)}>Вернуть предыдущий</button>}
             <button className="subtle" disabled={!enabled} onClick={() => generate("repeat", take)}>Повторить параметры</button>
             <button className="subtle" disabled={!enabled} onClick={() => generate("variant", take)}>Новый вариант</button>
           </div>
+          {take.qc && <QcDetails qc={take.qc} disabled={busy} recheck={() => recheck(take)}/>}
           <details className="take-review">
             <summary>Прослушивание и решение{reviewState.listened && " · Прослушан"}</summary>
             <div className="actions">
@@ -239,8 +260,11 @@ export function TakesPanel({ clip, voice, segment, segments, marked, saved }: Pr
     {history.length > 0 && saved && <details className="take-history">
       <summary>История других редакций и голосов · {history.length}</summary>
       <ul>{history.map((take) => <li key={take.id}>
-        <button className="subtle" onClick={() => play(take, take.request.text)}>Слушать</button>
-        <span>{take.request.text} · seed {take.request.seed}{take.review?.note && " · " + take.review.note}</span>
+        <div>
+          <button className="subtle" onClick={() => play(take, take.request.text)}>Слушать</button>
+          <span>{take.request.text} · seed {take.request.seed}{take.review?.note && " · " + take.review.note}</span>
+          {take.qc && <QcDetails qc={take.qc} disabled={busy} recheck={() => recheck(take)}/>}
+        </div>
       </li>)}</ul>
     </details>}
   </section>;

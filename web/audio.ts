@@ -19,7 +19,7 @@ export const states = {
 export const phases = { connecting: "Подключаем VoxCPM2…", loading: "Загружаем модель…", synthesizing: "Синтезируем речь…" };
 
 export class HttpError extends Error {
-  constructor(message: string, readonly status: number) { super(message); }
+  constructor(message: string, readonly status: number, readonly detail?: unknown) { super(message); }
 }
 
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
@@ -28,7 +28,7 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
     const problem = await response.json().catch(() => null);
     const fallback = response.status === 409 ? "Клип изменился. Откройте актуальную редакцию и повторите."
       : response.status >= 500 ? "Сервер не подтвердил запрос." : "Проверьте поля и повторите запрос.";
-    throw new HttpError(typeof problem?.detail === "string" ? problem.detail : fallback, response.status);
+    throw new HttpError(typeof problem?.detail === "string" ? problem.detail : fallback, response.status, problem?.detail);
   }
   return response.json();
 }

@@ -2,6 +2,12 @@ export type QC = {
   state: "unchecked" | "queued" | "running" | "unavailable" | "failed" | "complete";
   cached: boolean;
   error: string | null;
+  pronunciation_integrity: {
+    status: "clear" | "review" | "unassessed";
+    explanation: string;
+    basis: { policy: string };
+    findings: { code: string; expected: { start: number; text: string }; heard: { text: string } }[];
+  } | null;
   report: {
     id: string;
     status: "verified" | "suspect" | "likely_defect";
@@ -21,7 +27,8 @@ export type QC = {
 export const qcPending = (qc?: QC) => qc?.state === "queued" || qc?.state === "running";
 
 export const hasProblem = (qc?: QC) => qc?.state === "failed" ||
-  qc?.report?.status === "suspect" || qc?.report?.status === "likely_defect";
+  qc?.report?.status === "suspect" || qc?.report?.status === "likely_defect" ||
+  qc?.pronunciation_integrity?.status === "review";
 
 const verdicts = {
   verified: "Полнота подтверждена",
@@ -45,9 +52,15 @@ const reasons: Record<string, string> = {
   omission: "В распознавании пропущены как минимум два слова подряд.",
   loud_edge: "В последних 10 мс WAV сохраняется заметный сигнал.",
 };
+const lexicalReasons: Record<string, string> = {
+  number_substitution: "Распознано другое число",
+  numeric_fragment: "Часть величины распознана иначе",
+  word_substitution: "Распознано другое слово",
+};
 
 export function QcDetails({ qc, disabled, recheck }: { qc: QC; disabled: boolean; recheck: () => void }) {
   const report = qc.report;
+  const integrity = qc.pronunciation_integrity;
   const label = qc.state === "complete" && report ? verdicts[report.status] : statuses[qc.state];
   return <details className="take-qc">
     <summary>
@@ -55,6 +68,9 @@ export function QcDetails({ qc, disabled, recheck }: { qc: QC; disabled: boolean
         title={qc.state === "complete" ? report?.status : qc.state}>
         {label}
       </span>
+      {integrity?.status === "review" && <span className="qc-status suspect">
+        Проверьте точность произнесения
+      </span>}
     </summary>
     {qc.error && <p role="alert" className="voice-error">{qc.error}</p>}
     <div className="actions">
@@ -79,6 +95,16 @@ export function QcDetails({ qc, disabled, recheck }: { qc: QC; disabled: boolean
       {report.reasons.length > 0 && <ul className="qc-reasons">
         {report.reasons.map((reason) => <li key={reason}>{reasons[reason] ?? reason}</li>)}
       </ul>}
+      {integrity && <div className="pronunciation-report">
+        <h4>Точность произнесения</h4>
+        <p>{integrity.explanation}</p>
+        {integrity.findings.length > 0 && <ul className="qc-reasons">
+          {integrity.findings.map((finding) => <li key={finding.expected.start}>
+            {lexicalReasons[finding.code] ?? finding.code} · «{finding.expected.text}» → «{finding.heard.text}»
+          </li>)}
+        </ul>}
+        <p className="qc-meta">{integrity.basis.policy}</p>
+      </div>}
       <p className="qc-meta">Покрытие {Math.round(report.full_coverage * 100)}%
         {" · "}{report.basis.policy}{" · "}{report.id.slice(0, 8)}</p>
     </>}

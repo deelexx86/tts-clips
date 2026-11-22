@@ -9,6 +9,7 @@ from threading import Event, Thread
 import wave
 
 from .completion import POLICY, check
+from . import pronunciation
 from .text import digest
 from .whisper import Interrupted
 
@@ -21,6 +22,12 @@ CREATE TABLE IF NOT EXISTS qc_result (
     report TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS qc_results_by_input ON qc_result(audio_sha256, text_sha256, language);
+CREATE TABLE IF NOT EXISTS pronunciation_result (
+    qc_id TEXT NOT NULL REFERENCES qc_result(id),
+    policy TEXT NOT NULL,
+    result TEXT NOT NULL,
+    PRIMARY KEY (qc_id, policy)
+);
 CREATE TABLE IF NOT EXISTS take_qc (
     take_id TEXT PRIMARY KEY REFERENCES voice_job(id),
     state TEXT NOT NULL,
@@ -38,6 +45,16 @@ def take_basis(conn, take):
     return take["result"]["asset"]["sha256"], digest(take["request"]["text"]), language["language"]
 
 
+def save_pronunciation(conn, key, report):
+    basis = report["basis"]
+    result = pronunciation.evaluate(report["expected"], report["transcript"]["full"], basis["language"])
+    result["basis"] = {"policy": pronunciation.POLICY, "qc_report": key, **{
+        name: basis[name] for name in ("audio_sha256", "text_sha256", "language")
+    }}
+    conn.execute("INSERT OR IGNORE INTO pronunciation_result VALUES (?,?,?)",
+                 (key, pronunciation.POLICY, json.dumps(result, ensure_ascii=False)))
+
+
 class QualityControl:
     def __init__(self, jobs, recognizer):
         self.jobs = jobs
@@ -50,6 +67,13 @@ class QualityControl:
     def start(self):
         with closing(self.store.connect()) as conn, conn:
             conn.executescript(SCHEMA)
+            unassessed = conn.execute("""
+                SELECT id,report FROM qc_result r WHERE NOT EXISTS (
+                    SELECT 1 FROM pronunciation_result p WHERE p.qc_id=r.id AND p.policy=?
+                )
+            """, (pronunciation.POLICY,))
+            for row in unassessed:
+                save_pronunciation(conn, row["id"], json.loads(row["report"]))
             conn.execute("UPDATE take_qc SET state='queued' WHERE state='running'")
         self.thread.start()
         self.wake.set()
@@ -79,26 +103,36 @@ class QualityControl:
     @staticmethod
     def snapshot(conn, take_id):
         row = conn.execute("""
-            SELECT q.state,q.cached,q.error,r.id,r.report FROM take_qc q
-            LEFT JOIN qc_result r ON r.id=q.result_id WHERE q.take_id=?
-        """, (take_id,)).fetchone()
+            SELECT q.state,q.cached,q.error,r.id,r.report,p.result FROM take_qc q
+            LEFT JOIN qc_result r ON r.id=q.result_id
+            LEFT JOIN pronunciation_result p ON p.qc_id=r.id AND p.policy=?
+            WHERE q.take_id=?
+        """, (pronunciation.POLICY, take_id)).fetchone()
         if row is None:
-            return {"state": "unchecked", "cached": False, "error": None, "report": None}
+            return {"state": "unchecked", "cached": False, "error": None, "report": None,
+                    "pronunciation_integrity": None}
         return {
             "state": row["state"], "cached": bool(row["cached"]), "error": row["error"],
             "report": {"id": row["id"], **json.loads(row["report"])} if row["report"] else None,
+            "pronunciation_integrity": json.loads(row["result"]) if row["result"] else None,
         }
 
     def history(self, clip_id, take_id):
         with closing(self.store.connect()) as conn, conn:
             conn.execute("BEGIN")
             take = self.jobs.takes.require_take(conn, clip_id, take_id)
+            basis = take_basis(conn, take)
             rows = conn.execute("""
                 SELECT id,report FROM qc_result WHERE (audio_sha256,text_sha256,language)=(?,?,?)
                 ORDER BY rowid DESC
-            """, take_basis(conn, take))
+            """, basis)
+            pronunciation_rows = conn.execute("""
+                SELECT p.result FROM pronunciation_result p JOIN qc_result r ON r.id=p.qc_id
+                WHERE (r.audio_sha256,r.text_sha256,r.language)=(?,?,?) ORDER BY p.rowid DESC
+            """, basis)
             return {"current": self.snapshot(conn, take_id),
-                    "reports": [{"id": row["id"], **json.loads(row["report"])} for row in rows]}
+                    "reports": [{"id": row["id"], **json.loads(row["report"])} for row in rows],
+                    "pronunciation_reports": [json.loads(row["result"]) for row in pronunciation_rows]}
 
     def claim(self):
         with closing(self.store.connect()) as conn, conn:
@@ -149,6 +183,7 @@ class QualityControl:
             with closing(self.store.connect()) as conn, conn:
                 conn.execute("INSERT INTO qc_result VALUES (?,?,?,?,?)",
                              (key, audio_hash, text_hash, language, json.dumps(report, allow_nan=False)))
+                save_pronunciation(conn, key, report)
                 self.finish(conn, take_id, key, cached=False)
         except Interrupted:
             self.state(take_id, "queued", None)

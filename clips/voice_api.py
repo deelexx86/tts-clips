@@ -8,6 +8,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 
 from .audio import MAX_WAV
+from .speech_ready import PreparationRequired
 from .store import Conflict
 from .takes import CommandConflict
 
@@ -23,9 +24,17 @@ class Pin(BaseModel):
     name: str = Field(max_length=120)
 
 
-class GenerationRequest(BaseModel):
+class ClipSynthesis(BaseModel):
     revision: str
     key: str = Field(min_length=1, max_length=128)
+    speech_confirmation: str | None = Field(default=None, max_length=64)
+
+    def command(self):
+        # Keep command serialization compatible with existing idempotency keys.
+        return self.model_dump(exclude={"speech_confirmation"} if self.speech_confirmation is None else set())
+
+
+class GenerationRequest(ClipSynthesis):
     mode: Literal["selected", "missing", "repeat", "variant"]
     segments: list[str] = Field(default_factory=list)
     source_take: str | None = None
@@ -36,9 +45,7 @@ class SelectionRequest(BaseModel):
     version: int = Field(ge=0)
 
 
-class RecoveryRequest(BaseModel):
-    revision: str
-    key: str = Field(min_length=1, max_length=128)
+class RecoveryRequest(ClipSynthesis):
     source_take: str | None = None
     include_suspect: bool = False
 
@@ -111,7 +118,9 @@ def voice_router(jobs):
     @router.post("/clips/{clip_id}/generations", status_code=202)
     def synthesize(clip_id: str, body: GenerationRequest):
         try:
-            return jobs.takes.generate(clip_id, body.model_dump())
+            return jobs.takes.generate(clip_id, body.command())
+        except PreparationRequired as error:
+            raise HTTPException(422, error.detail) from error
         except KeyError:
             raise HTTPException(404, "Клип или дубль не найден.") from None
         except Conflict as error:
@@ -140,7 +149,9 @@ def voice_router(jobs):
     @router.post("/clips/{clip_id}/recoveries", status_code=202)
     def recover(clip_id: str, body: RecoveryRequest):
         try:
-            return jobs.recovery.begin(clip_id, body.model_dump())
+            return jobs.recovery.begin(clip_id, body.command())
+        except PreparationRequired as error:
+            raise HTTPException(422, error.detail) from error
         except KeyError:
             raise HTTPException(404, "Клип или дубль не найден.") from None
         except Conflict as error:

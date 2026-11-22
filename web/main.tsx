@@ -1,15 +1,18 @@
 import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { replacement, type Edit, type Range } from "./text";
+import { editorRange, replacement, type Edit, type Range } from "./text";
 import { VoicePanel } from "./voice";
 import { TakesPanel } from "./takes";
 import { ExportPanel } from "./export";
+import { SpeechWarnings, type SpeechWarning } from "./speech-ready";
 import "./style.css";
 
 type Summary = { id: string; title: string; updated_at: string };
 type Span = { start: number; end: number; segment_id: string | null; text_sha256: string | null };
 type SpeechSpan = Span & { segment_id: string; text_sha256: string };
-type Snapshot = Summary & { revision: string; text: string; spans: Span[]; voice_id: string | null };
+type Snapshot = Summary & {
+  revision: string; text: string; spans: Span[]; voice_id: string | null; speech_ready: SpeechWarning[];
+};
 type SaveState = "saved" | "pending" | "saving" | "error" | "conflict";
 
 const stateLabel: Record<SaveState, string> = {
@@ -252,18 +255,18 @@ function App() {
     (span): span is SpeechSpan => span.segment_id !== null && span.text_sha256 !== null
   ) ?? [] : [];
 
-  function locate(span: Span) {
+  function locate(span: Pick<Span, "start" | "end">, segmentId: string | null = null) {
     const input = textarea.current;
     if (!input) return;
-    const prefix = points.slice(0, span.start).join("");
+    const [start, end] = editorRange(points, span.start, span.end);
     input.focus();
-    input.setSelectionRange(prefix.length, prefix.length + points.slice(span.start, span.end).join("").length);
+    input.setSelectionRange(start, end);
     if (ruler.current) {
       ruler.current.style.width = input.clientWidth + "px";
-      ruler.current.textContent = prefix + "\u200b";
+      ruler.current.textContent = text.slice(0, start) + "\u200b";
       input.scrollTop = Math.max(0, ruler.current.scrollHeight - input.clientHeight / 2);
     }
-    setActive(span.segment_id);
+    setActive(segmentId);
   }
 
   return (
@@ -327,12 +330,16 @@ function App() {
             <ExportPanel key={"export-" + clip.id} clip={clip} saved={status === "saved" && !loading}
               locate={(id) => {
                 const span = segments.find((item) => item.segment_id === id);
-                if (span) locate(span);
+                if (span) locate(span, span.segment_id);
               }}/>
             <TakesPanel key={"takes-" + clip.id} clip={clip} voice={voice} segments={segments}
               segment={segments.find((span) => span.segment_id === active) ?? null}
               marked={marked.filter((id) => segments.some((span) => span.segment_id === id))}
-              saved={status === "saved" && !loading}/>
+              saved={status === "saved" && !loading} locate={locate}/>
+            {currentPlan && clip.speech_ready.length > 0 && <details className="speech-ready" open>
+              <summary>Подготовка к озвучке · {clip.speech_ready.length}</summary>
+              <SpeechWarnings warnings={clip.speech_ready} locate={locate}/>
+            </details>}
             <div className="editor-grid">
               <section className="editor" aria-labelledby="text-heading">
                 <div className="pane-head">
@@ -358,7 +365,7 @@ function App() {
                         const checked = event.target.checked;
                         setMarked((ids) => checked ? [...ids, span.segment_id] : ids.filter((id) => id !== span.segment_id));
                       }}/>
-                    <button aria-pressed={active === span.segment_id} onClick={() => locate(span)}>
+                    <button aria-pressed={active === span.segment_id} onClick={() => locate(span, span.segment_id)}>
                       <span className="number">{String(index + 1).padStart(2, "0")}</span>
                       <span>{points.slice(span.start, span.end).join("")}</span>
                     </button>

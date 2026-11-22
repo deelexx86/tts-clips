@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 
 from .export_api import export_router
 from .exports import Exports
+from .speech_ready import warnings_for
 from .store import Conflict, KEEP_VOICE, Store
 from .text import Edit
 from .voice_api import voice_router
@@ -32,6 +33,10 @@ class ClipPatch(BaseModel):
     title: str | None = Field(default=None, max_length=120)
     edits: list[Replacement] = Field(default_factory=list)
     voice_id: str | None = None
+
+
+def editor_snapshot(clip):
+    return {**clip, "speech_ready": warnings_for(clip["text"])}
 
 
 def create_app(database: Path | None = None, vox: VoxClient | None = None,
@@ -59,23 +64,24 @@ def create_app(database: Path | None = None, vox: VoxClient | None = None,
 
     @app.post("/api/clips", status_code=201)
     def create_clip():
-        return store.create()
+        return editor_snapshot(store.create())
 
     @app.get("/api/clips/{clip_id}")
     def get_clip(clip_id: str):
         try:
-            return store.get(clip_id)
+            return editor_snapshot(store.get(clip_id))
         except KeyError:
             raise HTTPException(404, "Клип не найден.") from None
 
     @app.patch("/api/clips/{clip_id}")
     def update_clip(clip_id: str, body: ClipPatch):
         try:
-            return store.update(clip_id, body.base_revision, body.title, [
+            clip = store.update(clip_id, body.base_revision, body.title, [
                 Edit(edit.start, edit.end, edit.text) for edit in body.edits
             ], body.voice_id if "voice_id" in body.model_fields_set else KEEP_VOICE)
+            return editor_snapshot(clip)
         except Conflict as exc:
-            return JSONResponse({"current": exc.current}, status_code=409)
+            return JSONResponse({"current": editor_snapshot(exc.current)}, status_code=409)
         except KeyError:
             raise HTTPException(404, "Клип не найден.") from None
         except ValueError as exc:

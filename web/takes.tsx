@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
 import { api, HttpError, json, pending, phases, states, type Job } from "./audio";
 import { hasProblem, QcDetails, qcPending, type QC } from "./qc";
 import { RecoveryRuns, strategyName, type RecoveryCommand, type RecoveryRun } from "./recovery";
+import { SpeechWarnings, speechGate, type SpeechGate, type SpeechWarning } from "./speech-ready";
 
 type Review = { listened: boolean; decision: "pending" | "accepted" | "rejected"; note: string };
 type Take = Job & { generation_id: string | null; review?: Review; qc?: QC };
@@ -10,7 +11,7 @@ type Choice = { clip_id: string; segment_id: string; text_hash: string; voice_id
 type Workspace = { jobs: Take[]; selections: Choice[]; recoveries: RecoveryRun[] };
 type Command = {
   revision: string; key: string; mode: "selected" | "missing" | "repeat" | "variant";
-  segments: string[]; source_take?: string;
+  segments: string[]; source_take?: string; speech_confirmation?: string;
 };
 type Props = {
   clip: { id: string; revision: string };
@@ -19,6 +20,7 @@ type Props = {
   segment: { segment_id: string; text_sha256: string } | null;
   segments: { segment_id: string; text_sha256: string }[];
   marked: string[];
+  locate: (warning: SpeechWarning) => void;
 };
 
 const decisions = { pending: "Без решения", accepted: "Принят", rejected: "Отклонён" };
@@ -35,7 +37,7 @@ function Note({ value, disabled, save }: { value: string; disabled: boolean; sav
   </form>;
 }
 
-export function TakesPanel({ clip, voice, segment, segments, marked, saved }: Props) {
+export function TakesPanel({ clip, voice, segment, segments, marked, saved, locate }: Props) {
   const [workspace, setWorkspace] = useState<Workspace>({ jobs: [], selections: [], recoveries: [] });
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
@@ -48,6 +50,10 @@ export function TakesPanel({ clip, voice, segment, segments, marked, saved }: Pr
   const [problemsOnly, setProblemsOnly] = useState(false);
   const [includeSuspect, setIncludeSuspect] = useState(false);
   const [retryRecovery, setRetryRecovery] = useState<RecoveryCommand | null>(null);
+  const [confirmation, setConfirmation] = useState<{
+    gate: SpeechGate; revision: string; run: () => void;
+  } | null>(null);
+  const gate = saved && confirmation?.revision === clip.revision ? confirmation.gate : null;
   const player = useRef<HTMLAudioElement>(null);
   const requestSeq = useRef(0);
   const via = "clips/" + clip.id;
@@ -123,6 +129,7 @@ export function TakesPanel({ clip, voice, segment, segments, marked, saved }: Pr
   }
 
   function send(command: Command) {
+    setConfirmation(null);
     void action(async () => {
       try {
         const batch = await api<{jobs: Job[]}>(via + "/generations", json(command));
@@ -130,6 +137,12 @@ export function TakesPanel({ clip, voice, segment, segments, marked, saved }: Pr
         if (!batch.jobs.length) setNotice("Для текущего голоса недостающих сегментов нет.");
       } catch (cause) {
         setRetry(cause instanceof HttpError && cause.status < 500 ? null : command);
+        const gate = cause instanceof HttpError && speechGate(cause.detail);
+        if (gate) {
+          setConfirmation({ gate, revision: command.revision,
+            run: () => send({ ...command, speech_confirmation: gate.confirmation }) });
+          return;
+        }
         throw cause;
       }
     });
@@ -144,12 +157,19 @@ export function TakesPanel({ clip, voice, segment, segments, marked, saved }: Pr
   }
 
   function recover(command: RecoveryCommand) {
+    setConfirmation(null);
     void action(async () => {
       try {
         await api(via + "/recoveries", json(command));
         setRetryRecovery(null);
       } catch (cause) {
         setRetryRecovery(cause instanceof HttpError && cause.status < 500 ? null : command);
+        const gate = cause instanceof HttpError && speechGate(cause.detail);
+        if (gate) {
+          setConfirmation({ gate, revision: command.revision,
+            run: () => recover({ ...command, speech_confirmation: gate.confirmation }) });
+          return;
+        }
         throw cause;
       }
     });
@@ -206,6 +226,16 @@ export function TakesPanel({ clip, voice, segment, segments, marked, saved }: Pr
     {!voice && <p>Выберите сохранённый голос или создайте пробу.</p>}
     {voice && !segment && <p>Щёлкните по сегменту для просмотра дублей. Флажки задают цели пакетной озвучки.</p>}
     {error && <p className="voice-error" role="alert">{error}</p>}
+    {gate && confirmation && <section className="speech-ready speech-confirmation" aria-label="Подтверждение озвучки">
+      <p role="status">В выбранном для озвучки тексте остались замечания.</p>
+      <SpeechWarnings warnings={gate.warnings} locate={locate}/>
+      <div className="actions">
+        <button className="subtle" type="button" onClick={() => setConfirmation(null)}>Отмена</button>
+        <button className="primary" type="button" disabled={!enabled} onClick={confirmation.run}>
+          Озвучить с предупреждениями
+        </button>
+      </div>
+    </section>}
     {notice && <p role="status">{notice}</p>}
     {networkError && <p role="alert">Связь с сервером прервана.</p>}
     {retry && <button className="subtle" disabled={busy} onClick={() => send(retry)}>Повторить отправку</button>}

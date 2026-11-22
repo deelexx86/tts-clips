@@ -14,6 +14,7 @@ import wave
 
 from .audio import RATE, wav_info
 from .completion import POLICY
+from . import pronunciation
 from .recovery import admission
 from .store import Conflict
 from .takes import material, review, selection
@@ -156,7 +157,14 @@ class Exports:
             "text_sha256": take["text_hash"], "language": clip["language"],
             "recognizer": identity, "policy": POLICY,
         }
-        return "verified" if identity is not None and report["basis"] == expected else "qc_stale"
+        if identity is None or report["basis"] != expected:
+            return "qc_stale"
+        integrity = qc["pronunciation_integrity"]
+        if not integrity or integrity["basis"]["policy"] != pronunciation.POLICY:
+            return "pronunciation_unassessed"
+        if integrity["status"] == "review":
+            return "pronunciation_review"
+        return "verified" if integrity["status"] == "clear" else "pronunciation_unassessed"
 
     def plan(self, clip_id, options):
         clip, captured = self.capture(clip_id, options["revision"])
@@ -196,6 +204,8 @@ class Exports:
                 "text_sha256": take["text_hash"], "asset": asset, "approval": approval,
                 "review": decision, "qc_state": qc["state"],
                 "qc_report": qc["report"]["id"] if qc["report"] else None,
+                "qc_basis": qc["report"]["basis"] if qc["report"] else None,
+                "pronunciation_integrity": qc["pronunciation_integrity"],
             })
 
         leading = options["leading_ms"] * (RATE // 1000)

@@ -134,6 +134,31 @@ textarea::selection { background: #cbe3cb; color: #16251c; }
 .take-qc p, .take-qc dd { overflow-wrap: anywhere; }
 .qc-reasons { list-style: disc; padding-left: 19px; margin: 8px 0; }
 .qc-meta { padding-top: 5px; }
+.pronunciation-report { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); }
+.speech-ready {
+  margin-bottom: 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbf7ed;
+}
+.speech-ready summary { cursor: pointer; font-weight: 600; }
+.speech-ready p { margin: 0; }
+.speech-warnings {
+  max-height: 185px;
+  overflow: auto;
+  list-style: none;
+  padding: 0;
+  margin: 8px 0 0;
+}
+.speech-warnings button {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  text-align: left;
+}
+.speech-warnings span { color: var(--muted); font-size: 13px; }
 .export-workspace { border-bottom: 1px solid var(--line); margin-bottom: 18px; }
 .export-panel { padding: 14px; margin: 0 0 12px; background: var(--paper); border: 1px solid var(--line); border-radius: 8px; font-size: 13px; }
 .export-panel fieldset { border: 0; margin: 0; padding: 0; min-width: 0; }

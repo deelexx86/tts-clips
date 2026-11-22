@@ -1,6 +1,8 @@
 import { phases, states, type Asset, type Job } from "./audio";
 
-export type RecoveryCommand = { revision: string; key: string; source_take?: string; include_suspect: boolean };
+export type RecoveryCommand = {
+  revision: string; key: string; source_take?: string; include_suspect: boolean; speech_confirmation?: string;
+};
 type Attempt = {
   strategy: "full" | "split"; job_id: string; state: Job["state"]; phase: Job["phase"];
   qc_state: string; seed: number; error: string | null;

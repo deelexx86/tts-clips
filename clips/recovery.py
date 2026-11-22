@@ -9,6 +9,7 @@ import wave
 
 from .audio import RATE
 from .completion import POLICY, edge_dbfs
+from .speech_ready import require_preparation
 from .store import Conflict
 from .takes import MAX_SEED, CommandConflict, current_material, selection
 from .text import SENTENCE, digest
@@ -143,9 +144,7 @@ class Recovery:
                     selection(conn, (clip_id, span["segment_id"], span["text_sha256"], clip["voice_id"]))["current"]
                     for span in clip["spans"] if span["segment_id"]
                 ]
-            run_id = uuid4().hex
-            conn.execute("INSERT INTO recovery_run VALUES (?,?,?,?,?)",
-                         (run_id, clip_id, clip["revision"], command["key"], serialized))
+            eligible = []
             for take_id in filter(None, targets):
                 source = self.jobs.takes.require_take(conn, clip_id, take_id)
                 qc = self.jobs.qc.snapshot(conn, take_id)
@@ -162,6 +161,14 @@ class Recovery:
                     if command["source_take"]:
                         raise CommandConflict("Восстановление этого дубля уже выполняется.")
                     continue
+                eligible.append((source, report))
+            segment_ids = {source["segment_id"] for source, _ in eligible}
+            require_preparation(clip, [span for span in clip["spans"] if span["segment_id"] in segment_ids],
+                                command.get("speech_confirmation"))
+            run_id = uuid4().hex
+            conn.execute("INSERT INTO recovery_run VALUES (?,?,?,?,?)",
+                         (run_id, clip_id, clip["revision"], command["key"], serialized))
+            for source, report in eligible:
                 baseline = {
                     "audio": source["result"]["asset"]["sha256"], "frames": source["result"]["asset"]["frames"],
                     "qc_report": report["id"], "qc_status": report["status"], "coverage": report["full_coverage"],

@@ -5,6 +5,7 @@ import json
 from secrets import randbelow
 from uuid import uuid4
 
+from .speech_ready import require_preparation
 from .store import Conflict
 
 MAX_SEED = 2**31 - 1
@@ -161,6 +162,7 @@ class Takes:
                 )
             ):
                 raise ValueError("Исходный дубль должен относиться к выбранному сегменту и голосу.")
+            require_preparation(clip, [spans[sid] for sid in targets], command.get("speech_confirmation"))
             base = self.jobs.find(conn, voice["preview_id"])["request"]
             batch = uuid4().hex
             conn.execute("INSERT INTO generation VALUES (?,?,?,?)", (batch, clip_id, command["key"], serialized))

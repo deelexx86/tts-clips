@@ -50,11 +50,14 @@ def _near(word: str, heard: str) -> bool:
     return prefix >= 4 and abs(len(word) - len(heard)) <= 2 and heard.startswith(word[:prefix])
 
 
+def align_tokens(expected: list[str], heard: list[str]):
+    return SequenceMatcher(None, expected, heard, autojunk=False).get_opcodes()
+
+
 def _alignment(expected: list[str], heard: list[str]) -> tuple[float, int, int, int, bool]:
-    matcher = SequenceMatcher(None, expected, heard, autojunk=False)
     matched = longest = omission = missing_end = 0
     ending_matches = False
-    for kind, start, stop, left, right in matcher.get_opcodes():
+    for kind, start, stop, left, right in align_tokens(expected, heard):
         count = stop - start
         if kind == "equal":
             matched += count

@@ -1,6 +1,12 @@
 export type Edit = { start: number; end: number; text: string };
 export type Range = [number, number];
 
+// Server offsets count Unicode code points. Textarea selection counts UTF-16 units.
+export function editorRange(points: string[], start: number, end: number): Range {
+  const offset = points.slice(0, start).join("").length;
+  return [offset, offset + points.slice(start, end).join("").length];
+}
+
 export function replacement(before: string, after: string, selected?: Range): Edit {
   if (selected) {
     const [start, end] = selected;

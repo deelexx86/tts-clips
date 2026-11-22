@@ -16,7 +16,7 @@ export const states = {
   queued: "В очереди", running: "Выполняется", ready: "WAV готов", failed: "Ошибка",
   cancelled: "Отменено", interrupted: "Прервано",
 };
-export const phases = { connecting: "Подключаем VoxCPM2…", loading: "Загружаем модель…", synthesizing: "Синтезируем речь…" };
+export const phases = { connecting: "Подключаем озвучку…", loading: "Готовим голос…", synthesizing: "Записываем речь…" };
 
 export class HttpError extends Error {
   constructor(message: string, readonly status: number, readonly detail?: unknown) { super(message); }

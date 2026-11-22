@@ -24,16 +24,16 @@ const messages: Record<string, string> = {
   missing_wav: "WAV выбранного дубля отсутствует.",
   invalid_wav: "WAV выбранного дубля повреждён или недоступен.",
   wav_too_large: "Размер мастера превышает предел формата RIFF WAV.",
-  suspect: "Whisper рекомендует прослушать дубль.",
-  likely_defect: "Whisper обнаружил вероятный пропуск речи.",
-  qc_stale: "Проверка относится к другой версии Whisper или правил. Повторите QC или примите дубль после прослушивания.",
+  suspect: "Прослушайте дубль и примите его или выберите другой.",
+  likely_defect: "Возможен пропуск речи. Прослушайте дубль или выберите другой.",
+  qc_stale: "Проверка относится к другой версии Whisper или правил. Повторите проверку или примите дубль после прослушивания.",
   qc_unchecked: "Дубль ещё не проходил проверку.",
   qc_queued: "Проверка ожидает запуска.",
   qc_running: "Проверка ещё выполняется.",
   qc_failed: "Проверка завершилась ошибкой.",
-  qc_unavailable: "Whisper недоступен.",
+  qc_unavailable: "Проверка недоступна. Прослушайте дубль и примите его вручную.",
   pronunciation_review: "Проверьте точность произнесения. Прослушайте и примите дубль для выпуска.",
-  pronunciation_unassessed: "Точность произнесения не оценена. Повторите QC или примите дубль после прослушивания.",
+  pronunciation_unassessed: "Точность произнесения не оценена. Повторите проверку или примите дубль после прослушивания.",
   recovery_review: "Проверьте восстановленный дубль на слух и примите его вручную.",
   verified: "Полнота подтверждена",
   manual: "Принят после прослушивания",
@@ -55,12 +55,12 @@ function Issues({ heading, issues, locate }: { heading: string; issues: Issue[];
   </div>;
 }
 
-export function ExportPanel({ clip, saved, locate }: {
+export function ExportPanel({ clip, saved, locate, active }: {
   clip: { id: string; revision: string };
   saved: boolean;
+  active: boolean;
   locate: (id: string) => void;
 }) {
-  const [open, setOpen] = useState(false);
   const [mode, setMode] = useState<Options["mode"]>("final");
   const [format, setFormat] = useState<Format>("wav");
   const [leading, setLeading] = useState("0");
@@ -72,6 +72,7 @@ export function ExportPanel({ clip, saved, locate }: {
   const [error, setError] = useState("");
   const [historyError, setHistoryError] = useState(false);
   const historyRequest = useRef(0);
+  const planRequest = useRef(0);
   const via = "clips/" + clip.id;
   const validPauses = [leading, gap].every((value) => /^\d+$/.test(value) && Number(value) <= 10000);
   const options = { revision: clip.revision, mode, format, leading_ms: Number(leading), gap_ms: Number(gap) };
@@ -82,7 +83,7 @@ export function ExportPanel({ clip, saved, locate }: {
     ? plan : null;
 
   useEffect(() => {
-    if (!open) return;
+    if (!active) return;
     let alive = true;
     async function refresh() {
       const stamp = ++historyRequest.current;
@@ -99,14 +100,23 @@ export function ExportPanel({ clip, saved, locate }: {
     void refresh();
     const timer = window.setInterval(() => { if (!document.hidden) void refresh(); }, 3000);
     return () => { alive = false; window.clearInterval(timer); };
-  }, [clip.revision, via, open]);
+  }, [clip.revision, via, active]);
+
+  useEffect(() => {
+    if (!active) {
+      ++planRequest.current;
+      setPlan(null);
+    }
+  }, [active]);
 
   async function checkPlan() {
+    const stamp = ++planRequest.current;
     setBusy("planning");
     setError("");
     setPlan(null);
     try {
-      setPlan(await api(via + "/export-plan", json(options)));
+      const next = await api<Plan>(via + "/export-plan", json(options));
+      if (stamp === planRequest.current) setPlan(next);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Не удалось проверить сборку.");
     } finally {
@@ -138,14 +148,15 @@ export function ExportPanel({ clip, saved, locate }: {
     }
   }
 
-  return <section className="export-workspace" aria-labelledby="export-heading">
-    <div className="voice-bar">
-      <h2 id="export-heading">Сборка и экспорт</h2>
-      <button className="subtle" aria-expanded={open} aria-controls="export-settings" onClick={() => setOpen(!open)}>
-        {open ? "Свернуть экспорт" : "Открыть экспорт"}
-      </button>
-    </div>
-    {open && <div className="export-panel" id="export-settings">
+  return <section className="export-workspace work-stage" aria-labelledby="export-heading">
+    <header className="stage-head"><div>
+      <h2 id="export-heading">Экспорт клипа</h2>
+      <p role="status">{busy === "planning" ? "Проверяем дубли…" :
+        available?.blockers.length ? "Для сборки требуется решение" :
+        available?.mode === "final" ? "Все сегменты готовы. Можно собрать клип." :
+        available ? "Можно собрать черновик." : "Проверьте готовность клипа к сборке."}</p>
+    </div></header>
+    <div className="export-panel" id="export-settings">
       <form onSubmit={(event) => { event.preventDefault(); void checkPlan(); }}>
         <fieldset className="export-settings" disabled={Boolean(busy)}>
           <legend>Параметры сборки</legend>
@@ -161,12 +172,15 @@ export function ExportPanel({ clip, saved, locate }: {
               <option value="mp3">MP3 · 128 кбит/с + WAV</option>
             </select>
           </label>
-          <label>Пауза в начале (мс)
-            <input type="number" required step="1" min="0" max="10000" value={leading} onChange={(event) => setLeading(event.target.value)}/>
-          </label>
-          <label>Между сегментами (мс)
-            <input type="number" required step="1" min="0" max="10000" value={gap} onChange={(event) => setGap(event.target.value)}/>
-          </label>
+          <details className="pause-options">
+            <summary>Паузы</summary>
+            <label>Пауза в начале (мс)
+              <input type="number" required step="1" min="0" max="10000" value={leading} onChange={(event) => setLeading(event.target.value)}/>
+            </label>
+            <label>Между сегментами (мс)
+              <input type="number" required step="1" min="0" max="10000" value={gap} onChange={(event) => setGap(event.target.value)}/>
+            </label>
+          </details>
         </fieldset>
         <div className="actions export-actions">
           <button className="subtle" type="submit" disabled={!saved || Boolean(busy) || !validPauses}>Проверить сборку</button>
@@ -174,47 +188,52 @@ export function ExportPanel({ clip, saved, locate }: {
             onClick={() => void assemble()}>Собрать аудио</button>
           {busy && <span role="status">{busy === "planning" ? "Проверяем дубли…" : "Собираем аудио…"}</span>}
         </div>
+        {!saved && <p>Дождитесь сохранения клипа перед сборкой.</p>}
+        {error && <p className="voice-error" role="alert">{error}</p>}
+        {!available && !busy && <p>Проверьте сборку, чтобы увидеть готовность и замечания по сегментам.</p>}
       </form>
-      {!saved && <p>Дождитесь сохранения клипа перед сборкой.</p>}
-      {error && <p className="voice-error" role="alert">{error}</p>}
-      {available && <div className="export-plan">
-        {available.seconds !== null && <p role="status">{available.inputs.length} сегм. · {seconds(available.seconds)}
-          {" · "}{available.frames.toLocaleString("ru-RU")} кадров PCM</p>}
-        <Issues heading="Сборка заблокирована" issues={available.blockers} locate={locate}/>
-        <Issues heading="Предупреждения черновика" issues={available.warnings} locate={locate}/>
-        {available.inputs.length > 0 && <details>
-          <summary>Состав сборки</summary>
-          <ol>{available.inputs.map((item) => <li key={item.segment_id}>
-            {item.number}. {item.text} · {seconds(item.asset.seconds)} · {messages[item.approval] ?? item.approval}
-          </li>)}</ol>
-        </details>}
-      </div>}
-      {historyError && <p role="alert">Не удалось обновить историю экспорта.</p>}
-      {selected && <div className="export-history">
-        <label>История экспортов
-          <select value={selected.id} onChange={(event) => setPlaying(event.target.value)}>
-            {history.map((item) => <option key={item.id} value={item.id}>
-              {new Date(item.created_at).toLocaleString("ru-RU")} · {item.plan.format.toUpperCase()}
-              {" · "}{item.plan.mode === "draft" ? "Черновик" : "Выпуск"}{!isCurrent(item) && " · Прежний снимок"}
-            </option>)}
-          </select>
-        </label>
-        <p>{seconds(selected.plan.seconds!)} · Паузы {selected.plan.leading_ms} / {selected.plan.gap_ms} мс
-          {!isCurrent(selected) && " · Прежний снимок"}
-          {selected.plan.warnings.length > 0 && " · Замечания: " + selected.plan.warnings.length}</p>
-        <audio key={selected.id} aria-label="Плеер полного клипа" controls preload="metadata"
-          src={"/api/exports/" + selected.id + (selected.files.mp3 ? "/mp3" : "/wav")} onPlay={(event) => {
-            for (const other of document.querySelectorAll("audio")) if (other !== event.currentTarget) other.pause();
-          }}/>
-        {selected.mp3_error && <p role="alert" className="voice-error">{selected.mp3_error}</p>}
-        <div className="actions">
-          {formats.filter((item) => selected.files[item]).map((item) =>
-            <a className="subtle" key={item} href={"/api/exports/" + selected.id + "/" + item + "?download=true"}>
-              Скачать {item.toUpperCase()}
-            </a>
-          )}
-        </div>
-      </div>}
-    </div>}
+      <div className="export-result">
+        <h3>{available?.blockers.length ? "Требует внимания" : "Полный клип"}</h3>
+        {available && <div className="export-plan">
+          {available.seconds !== null && <p role="status">{available.inputs.length} сегм. · {seconds(available.seconds)}</p>}
+          <Issues heading="Сборка заблокирована" issues={available.blockers} locate={locate}/>
+          <Issues heading="Предупреждения черновика" issues={available.warnings} locate={locate}/>
+          {available.inputs.length > 0 && <details>
+            <summary>Состав сборки</summary>
+            <ol>{available.inputs.map((item) => <li key={item.segment_id}>
+              {item.number}. {item.text} · {seconds(item.asset.seconds)} · {messages[item.approval] ?? item.approval}
+            </li>)}</ol>
+          </details>}
+        </div>}
+        {!selected && !available?.blockers.length && <p>После сборки здесь появится плеер и ссылки для скачивания.</p>}
+        {historyError && <p role="alert">Не удалось обновить историю экспорта.</p>}
+        {selected && <div className="export-history">
+          <label>История экспортов
+            <select value={selected.id} onChange={(event) => setPlaying(event.target.value)}>
+              {history.map((item) => <option key={item.id} value={item.id}>
+                {new Date(item.created_at).toLocaleString("ru-RU")} · {item.plan.format.toUpperCase()}
+                {" · "}{item.plan.mode === "draft" ? "Черновик" : "Выпуск"}{!isCurrent(item) && " · Прежний снимок"}
+              </option>)}
+            </select>
+          </label>
+          <p>{seconds(selected.plan.seconds!)} · Паузы {selected.plan.leading_ms} / {selected.plan.gap_ms} мс
+            {!isCurrent(selected) && " · Прежний снимок"}
+            {selected.plan.warnings.length > 0 && " · Замечания: " + selected.plan.warnings.length}</p>
+          <audio key={selected.id} aria-label="Плеер полного клипа" controls preload="metadata"
+            onError={() => setError("Файл не открывается. Выберите другой экспорт или соберите клип заново.")}
+            src={"/api/exports/" + selected.id + (selected.files.mp3 ? "/mp3" : "/wav")} onPlay={(event) => {
+              for (const other of document.querySelectorAll("audio")) if (other !== event.currentTarget) other.pause();
+            }}/>
+          {selected.mp3_error && <p role="alert" className="voice-error">{selected.mp3_error}</p>}
+          <div className="actions">
+            {formats.filter((item) => selected.files[item]).map((item) =>
+              <a className="subtle" key={item} href={"/api/exports/" + selected.id + "/" + item + "?download=true"}>
+                Скачать {item.toUpperCase()}
+              </a>
+            )}
+          </div>
+        </div>}
+      </div>
+    </div>
   </section>;
 }

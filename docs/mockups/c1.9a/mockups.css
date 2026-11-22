@@ -127,3 +127,69 @@ body[data-concept=b] .stage-head { padding: 12px 18px; }
   .take-line > .inline button { padding-inline:9px; }
 }
 @media(min-width: 701px) { .narrow { display:none; } }
+/* Compact editing sheet. All rules are scoped to concept B. */
+body[data-concept=b] {
+  --ink:#222831; --accent:#a92132; --tint:#faf0f1; --line:#dce0e5;
+  --paper:#fff; --soft:#f8f9fa; --muted:#56616d; background:#f3f4f6;
+  font:14px/1.45 "Segoe UI",Arial,sans-serif;
+}
+body[data-concept=b] {
+  & .review {background:#191c21;padding-block:5px;gap:10px}
+  & .review button {min-height:28px;font-size:12px;border-radius:4px}
+  & .review button[aria-pressed=true] {background:#aa2534;color:#fff;border-color:#aa2534}
+  & .top-inner {min-height:43px;padding-block:4px}
+  & .wordmark {font-size:18px}
+  & .workspace {max-width:1280px;padding-top:18px}
+  & .clip-header {margin-bottom:12px}
+  & .clip-name {font-size:25px;min-height:32px;letter-spacing:-.035em}
+  & h2 {font-size:18px}
+  & h3 {font-size:15px}
+  & button, & select, & input:not([type=checkbox]) {min-height:30px}
+  & button {font-size:13px;padding:4px 10px;border-radius:4px;font-weight:500}
+  & button.primary {color:#fff;background:var(--accent)}
+  & .inline-stage {margin-bottom:8px;border-radius:6px}
+  & .inline-stage-head {background:#fff;padding:8px 14px;min-height:36px;justify-content:flex-start;font-size:14px;font-weight:650}
+  & .inline-stage-head::before {content:"";width:6px;height:6px;border:solid #687380;border-width:0 1px 1px 0;transform:rotate(-45deg)}
+  & .inline-stage-head[aria-expanded=true]::before {transform:rotate(45deg)}
+  & .inline-stage-head span {margin-left:auto;font-size:12px}
+  & .stage-head, & .stage-foot {padding:8px 14px}
+  & .stage-head p {margin:0}
+  & .segment-list {padding:0 14px}
+  & .segment-list h3 {display:inline-block;margin:7px 12px 7px 0}
+  & .segment-list label {display:inline-block;margin:4px 0}
+  & .segment-row {padding:7px 10px;border-radius:0;align-items:center}
+  & .segment-row > span:last-child {display:flex;align-items:center;justify-content:space-between;gap:8px}
+  & .segment-row[aria-pressed=true] {background:#f8edef}
+  & .segment-caption {font-size:12px}
+  & .inspector {padding:10px 14px;margin:0 0 6px;background:#fcfcfd;gap:9px;border-left-width:2px}
+  & .inspector-top h3 {font-size:14px}
+  & .inspector-top button {color:#145ca8}
+  & .inspector blockquote, & .script {font:15px/1.55 "Segoe UI",Arial,sans-serif}
+  & .player {border-radius:5px;padding:9px 10px}
+  & .take {padding:5px 0}
+  & .field-head {margin-bottom:7px}
+  & .active-label {font-weight:500;padding:1px 5px;border-radius:3px;background:#eef1f4;color:#394454}
+  & .prep > div, & .export-grid > div {padding:12px 14px}
+  & .stack {align-content:start;gap:8px}
+  & label.input {gap:3px;font-size:13px}
+  & select, & input.field {padding:3px 8px;border-radius:4px}
+  & textarea {border-radius:4px;padding:8px 10px}
+  & summary {padding-block:5px}
+  & .hint:not(.warn) {background:#f1f7f3;border-color:#498264}
+}
+@media(min-width:900px) {
+  body[data-concept=b] .inspector {grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);column-gap:24px}
+  body[data-concept=b] .inspector-top {grid-column:1/-1}
+  body[data-concept=b] .inspector > .player {grid-column:1;align-self:start}
+  body[data-concept=b] .inspector > div:last-child:not(.player) {grid-column:2;grid-row:2/span 2;border-left:1px solid var(--line);padding-left:18px}
+}
+@media(max-width:700px) {
+  body[data-concept=b] .workspace {padding:12px 9px 24px}
+  body[data-concept=b] .review button {min-height:32px}
+  body[data-concept=b] .segment-row > span:last-child {display:block}
+  body[data-concept=b] .inline-stage-head {min-height:40px}
+  body[data-concept=b] .inspector {padding:9px}
+  body[data-concept=b] .inspector button {min-height:36px}
+}
+body[data-concept=b] { min-height:100vh }
+body[data-concept=b] .save { color:#426552 }

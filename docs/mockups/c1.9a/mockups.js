@@ -228,8 +228,8 @@ function go(stage, focus = true) {
 
 function fromHash() {
   const [letter, scene] = location.hash.slice(1).split("/");
-  concept = letter === "b" ? "b" : "a";
-  reset(["work", "prep", "export"].includes(scene) ? scene : "empty");
+  concept = letter === "a" ? "a" : "b";
+  reset(!letter ? "work" : ["work", "prep", "export"].includes(scene) ? scene : "empty");
   render();
 }
 window.addEventListener("hashchange", fromHash);

@@ -1,47 +1,9 @@
 import { useEffect, useState, type FormEvent } from "react";
 
-type Asset = { sha256: string; seconds: number };
+import { api, json, pending, states, phases, type Asset, type Job } from "./audio";
+
 type Voice = { id: string; name: string; mode: "design" | "clone"; preview_id: string; reference: Asset };
-type Job = {
-  id: string;
-  state: "queued" | "running" | "ready" | "failed" | "cancelled" | "interrupted";
-  phase: "connecting" | "loading" | "synthesizing" | null;
-  error: string | null;
-  request: { text: string; mode: "design" | "clone" };
-  result: { asset: Asset; reused: boolean } | null;
-  segment_id: string | null;
-  text_hash: string | null;
-  voice_id: string | null;
-};
-type Props = {
-  clip: { id: string; revision: string };
-  voice: string | null;
-  selectVoice: (id: string | null) => void;
-  segment: { segment_id: string | null; text_sha256: string } | null;
-  saved: boolean;
-};
-
-const pending = (job?: Job) => job?.state === "queued" || job?.state === "running";
-const states = {
-  queued: "В очереди", running: "Выполняется", ready: "WAV готов", failed: "Ошибка",
-  cancelled: "Отменено", interrupted: "Прервано",
-};
-const phases = { connecting: "Подключаем VoxCPM2…", loading: "Загружаем модель…", synthesizing: "Синтезируем речь…" };
-
-async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch("/api/" + path, init);
-  if (!response.ok) {
-    const problem = await response.json().catch(() => null);
-    if (response.status === 409) throw new Error("Клип изменился. Откройте актуальную редакцию и повторите.");
-    throw new Error(typeof problem?.detail === "string" ? problem.detail : "Проверьте поля и повторите запрос.");
-  }
-  return response.json();
-}
-
-const json = (data: object): RequestInit => ({
-  method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data),
-});
-
+type Props = { voice: string | null; selectVoice: (id: string | null) => void; };
 function Player({ asset, label }: { asset: Asset; label: string }) {
   return <audio aria-label={label} controls preload="metadata" src={"/api/audio/" + asset.sha256}
     onPlay={(event) => {
@@ -59,10 +21,9 @@ function JobActivity({ job, cancel }: { job: Job; cancel: (job: Job) => void }) 
   </div>;
 }
 
-export function VoicePanel({ clip, voice, selectVoice, segment, saved }: Props) {
+export function VoicePanel({ voice, selectVoice }: Props) {
   const [voices, setVoices] = useState<Voice[]>([]);
   const [previews, setPreviews] = useState<Job[]>([]);
-  const [jobs, setJobs] = useState<Job[]>([]);
   const [previewId, setPreviewId] = useState("");
   const [mode, setMode] = useState<"design" | "clone">("design");
   const [name, setName] = useState("");
@@ -71,24 +32,19 @@ export function VoicePanel({ clip, voice, selectVoice, segment, saved }: Props) 
   const [error, setError] = useState("");
   const [networkError, setNetworkError] = useState("");
   const preview = previews.find((job) => job.id === previewId) ?? previews[0];
-  const via = "clips/" + clip.id + "/audio-jobs";
-  const selectedJob = segment ? jobs.find((job) => job.segment_id === segment.segment_id &&
-    job.text_hash === segment.text_sha256 && job.voice_id === voice) : undefined;
-  const running = jobs.find(pending);
-  const shouldPoll = previews.some(pending) || Boolean(running);
+  const shouldPoll = previews.some(pending);
   const pinned = voices.find((item) => item.preview_id === preview?.id);
 
   useEffect(() => {
     let valid = true;
     async function load() {
       try {
-        const [nextVoices, nextPreviews, nextJobs] = await Promise.all([
-          api<Voice[]>("voices"), api<Job[]>("previews"), api<Job[]>(via),
+        const [nextVoices, nextPreviews] = await Promise.all([
+          api<Voice[]>("voices"), api<Job[]>("previews"),
         ]);
         if (!valid) return;
         setVoices(nextVoices);
         setPreviews(nextPreviews);
-        setJobs(nextJobs);
         setNetworkError("");
       } catch {
         if (valid) setNetworkError("Не удалось обновить звук. Проверьте подключение к приложению.");
@@ -97,7 +53,7 @@ export function VoicePanel({ clip, voice, selectVoice, segment, saved }: Props) 
     void load();
     const timer = window.setInterval(() => void load(), shouldPoll ? 900 : 5000);
     return () => { valid = false; window.clearInterval(timer); };
-  }, [via, shouldPoll]);
+  }, [shouldPoll]);
 
   async function action(run: () => Promise<void>) {
     setError("");
@@ -113,8 +69,7 @@ export function VoicePanel({ clip, voice, selectVoice, segment, saved }: Props) 
 
   function remember(job: Job) {
     const update = (current: Job[]) => [job, ...current.filter((item) => item.id !== job.id)];
-    if (job.segment_id) setJobs(update);
-    else setPreviews(update);
+    setPreviews(update);
   }
 
   function createPreview(event: FormEvent<HTMLFormElement>) {
@@ -146,14 +101,6 @@ export function VoicePanel({ clip, voice, selectVoice, segment, saved }: Props) 
       const item = await api<Voice>("voices", json({ preview_id: preview.id, name }));
       setVoices((list) => [item, ...list.filter((entry) => entry.id !== item.id)]);
       selectVoice(item.id);
-    });
-  }
-
-  function synthesize() {
-    if (!segment) return;
-    void action(async () => {
-      const job = await api<Job>(via, json({ revision: clip.revision, segment_id: segment.segment_id }));
-      remember(job);
     });
   }
 
@@ -215,18 +162,5 @@ export function VoicePanel({ clip, voice, selectVoice, segment, saved }: Props) 
         </>}
       </div>
     </div>}
-    <div className="segment-audio">
-      <div className="voice-bar">
-        <h2>Озвучка сегмента</h2>
-        <button type="button" className="primary" onClick={synthesize}
-          disabled={!voice || !segment || !saved || busy || pending(selectedJob) || selectedJob?.state === "ready"}>
-          {selectedJob?.state === "failed" ? "Повторить озвучку" : "Озвучить сегмент"}
-        </button>
-      </div>
-      {!segment && <p>Выберите реплику в списке сегментов.</p>}
-      {segment && !voice && <p>Выберите сохранённый голос или создайте пробу.</p>}
-      {(selectedJob ?? running) && <JobActivity job={(selectedJob ?? running)!} cancel={cancel}/>}
-      {selectedJob?.result && <Player asset={selectedJob.result.asset} label="Аудио сегмента"/>}
-    </div>
   </section>;
 }

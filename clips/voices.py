@@ -1,4 +1,4 @@
-"""Persistent voice previews and single-segment synthesis jobs."""
+"""Persistent voice previews and synthesis jobs."""
 
 from contextlib import closing
 from hashlib import sha256
@@ -8,7 +8,7 @@ from threading import Event, Thread
 from uuid import uuid4
 
 from .audio import Assets, normalize_reference
-from .store import Conflict
+from .takes import Takes, choose_first, migrate
 from .vox import Cancelled
 
 SCHEMA = """
@@ -34,9 +34,12 @@ CREATE TABLE IF NOT EXISTS voice (
     reference TEXT NOT NULL
 );
 """
+
+
 class VoiceJobs:
     def __init__(self, store, client):
         self.store = store
+        self.takes = Takes(self)
         self.assets = Assets(store.path.with_suffix(".audio"))
         self.client = client
         self.queue = Queue()
@@ -46,6 +49,7 @@ class VoiceJobs:
     def start(self):
         with closing(self.store.connect()) as conn, conn:
             conn.executescript(SCHEMA)
+            migrate(conn)
             conn.execute("""
                 UPDATE voice_job SET state='interrupted', phase=NULL
                 WHERE state IN ('queued', 'running')
@@ -62,6 +66,10 @@ class VoiceJobs:
         row = conn.execute("SELECT * FROM voice_job WHERE id=?", (job_id,)).fetchone()
         if row is None:
             raise KeyError(job_id)
+        return VoiceJobs.decode(row)
+
+    @staticmethod
+    def decode(row):
         job = dict(row)
         job["request"] = json.loads(job["request"])
         job["result"] = json.loads(job["result"]) if job["result"] else None
@@ -99,35 +107,6 @@ class VoiceJobs:
         self.queue.put(job["id"])
         return job
 
-    def segment(self, clip_id, revision, segment):
-        with closing(self.store.connect()) as conn, conn:
-            conn.execute("BEGIN IMMEDIATE")
-            clip = self.store.snapshot(conn, clip_id)
-            if clip["revision"] != revision:
-                raise Conflict(clip)
-            span = next((span for span in clip["spans"] if span["segment_id"] == segment), None)
-            if span is None:
-                raise KeyError(segment)
-            if not clip["voice_id"]:
-                raise ValueError("Выберите сохранённый голос.")
-            voice = conn.execute("SELECT * FROM voice WHERE id=?", (clip["voice_id"],)).fetchone()
-            if voice is None:
-                raise KeyError(clip["voice_id"])
-            existing = conn.execute("""
-                SELECT id FROM voice_job WHERE clip_id=? AND segment_id=? AND text_hash=?
-                  AND voice_id=? AND state IN ('queued','running','ready') ORDER BY rowid DESC LIMIT 1
-            """, (clip_id, segment, span["text_sha256"], voice["id"])).fetchone()
-            if existing:
-                return self.find(conn, existing["id"])
-            origin = self.find(conn, voice["preview_id"])
-            payload = {
-                "mode": "clone", "text": clip["text"][span["start"]:span["end"]], "description": "",
-                "seed": origin["request"]["seed"], "reference": json.loads(voice["reference"]),
-            }
-            job = self.new(conn, "segment", payload, clip_id, revision, segment, span["text_sha256"], voice["id"])
-        self.queue.put(job["id"])
-        return job
-
     def cancel(self, job_id):
         with closing(self.store.connect()) as conn, conn:
             conn.execute("""
@@ -160,10 +139,15 @@ class VoiceJobs:
 
     def change(self, job_id, state, *, prior="running", phase=None, result=None, error=None):
         with closing(self.store.connect()) as conn, conn:
-            return conn.execute("""
+            changed = conn.execute("""
                 UPDATE voice_job SET state=?, phase=?, result=?, error=? WHERE id=? AND state=?
             """, (state, phase, json.dumps(result) if result is not None else None,
                   error, job_id, prior)).rowcount == 1
+            if changed and state == "ready":
+                job = self.find(conn, job_id)
+                if job["kind"] == "segment":
+                    choose_first(conn, job)
+            return changed
 
     def run(self):
         try:

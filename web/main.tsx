@@ -2,10 +2,12 @@ import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { replacement, type Edit, type Range } from "./text";
 import { VoicePanel } from "./voice";
+import { TakesPanel } from "./takes";
 import "./style.css";
 
 type Summary = { id: string; title: string; updated_at: string };
-type Span = { start: number; end: number; segment_id: string | null; text_sha256: string };
+type Span = { start: number; end: number; segment_id: string | null; text_sha256: string | null };
+type SpeechSpan = Span & { segment_id: string; text_sha256: string };
 type Snapshot = Summary & { revision: string; text: string; spans: Span[]; voice_id: string | null };
 type SaveState = "saved" | "pending" | "saving" | "error" | "conflict";
 
@@ -29,6 +31,7 @@ function App() {
   const [status, setStatus] = useState<SaveState>("saved");
   const [conflict, setConflict] = useState<Snapshot | null>(null);
   const [active, setActive] = useState<string | null>(null);
+  const [marked, setMarked] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [notice, setNotice] = useState("");
   const [showLibrary, setShowLibrary] = useState(false);
@@ -65,6 +68,7 @@ function App() {
     setConflict(null);
     setStatus("saved");
     setActive(null);
+    setMarked([]);
     const url = new URL(window.location.href);
     url.searchParams.set("clip", snapshot.id);
     window.history.replaceState(null, "", url);
@@ -161,7 +165,6 @@ function App() {
     pending.current.push(replacement(before, value, range));
     draft.current.text = value;
     setText(value);
-    setActive(null);
     if (!competing.current) setStatus("pending");
     schedule();
   }
@@ -244,7 +247,9 @@ function App() {
 
   const points = Array.from(text);
   const currentPlan = clip?.text === text;
-  const segments = currentPlan ? clip?.spans.filter((span) => span.segment_id) ?? [] : [];
+  const segments = currentPlan ? clip?.spans.filter(
+    (span): span is SpeechSpan => span.segment_id !== null && span.text_sha256 !== null
+  ) ?? [] : [];
 
   function locate(span: Span) {
     const input = textarea.current;
@@ -312,13 +317,16 @@ function App() {
                 <button className="primary" onClick={() => resolveConflict(true)}>Сохранить мой черновик</button>
               </div>
             </section>}
-            <VoicePanel key={clip.id} clip={clip} voice={voice} segment={segments.find((span) => span.segment_id === active) ?? null}
-              saved={status === "saved" && !loading} selectVoice={(id) => {
+            <VoicePanel key={"voice-" + clip.id} voice={voice} selectVoice={(id) => {
                 draft.current.voice = id;
                 setVoice(id);
                 if (!competing.current) setStatus("pending");
                 schedule();
               }}/>
+            <TakesPanel key={"takes-" + clip.id} clip={clip} voice={voice} segments={segments}
+              segment={segments.find((span) => span.segment_id === active) ?? null}
+              marked={marked.filter((id) => segments.some((span) => span.segment_id === id))}
+              saved={status === "saved" && !loading}/>
             <div className="editor-grid">
               <section className="editor" aria-labelledby="text-heading">
                 <div className="pane-head">
@@ -339,6 +347,11 @@ function App() {
                 </div>
                 {segments.length > 0 ? <ol>{segments.map((span, index) =>
                   <li key={span.segment_id}>
+                    <input type="checkbox" aria-label={"Включить сегмент " + (index + 1) + " в генерацию"}
+                      checked={marked.includes(span.segment_id)} onChange={(event) => {
+                        const checked = event.target.checked;
+                        setMarked((ids) => checked ? [...ids, span.segment_id] : ids.filter((id) => id !== span.segment_id));
+                      }}/>
                     <button aria-pressed={active === span.segment_id} onClick={() => locate(span)}>
                       <span className="number">{String(index + 1).padStart(2, "0")}</span>
                       <span>{points.slice(span.start, span.end).join("")}</span>

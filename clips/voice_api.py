@@ -1,5 +1,7 @@
 """HTTP commands for voice creation and playback."""
 
+from typing import Literal
+
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, JSONResponse
@@ -7,6 +9,7 @@ from pydantic import BaseModel, Field
 
 from .audio import MAX_WAV
 from .store import Conflict
+from .takes import CommandConflict
 
 
 class Design(BaseModel):
@@ -20,9 +23,23 @@ class Pin(BaseModel):
     name: str = Field(max_length=120)
 
 
-class SegmentRequest(BaseModel):
+class GenerationRequest(BaseModel):
     revision: str
-    segment_id: str
+    key: str = Field(min_length=1, max_length=128)
+    mode: Literal["selected", "missing", "repeat", "variant"]
+    segments: list[str] = Field(default_factory=list)
+    source_take: str | None = None
+
+
+class SelectionRequest(BaseModel):
+    take_id: str
+    version: int = Field(ge=0)
+
+
+class ReviewRequest(BaseModel):
+    listened: bool | None = None
+    decision: Literal["pending", "accepted", "rejected"] | None = None
+    note: str | None = Field(default=None, max_length=500)
 
 
 def required(text, message):
@@ -77,14 +94,48 @@ def voice_router(jobs):
     def segment_jobs(clip_id: str):
         return jobs.list(clip_id)
 
-    @router.post("/clips/{clip_id}/audio-jobs", status_code=202)
-    def synthesize(clip_id: str, body: SegmentRequest):
+    @router.get("/clips/{clip_id}/takes")
+    def takes(clip_id: str):
         try:
-            return jobs.segment(clip_id, body.revision, body.segment_id)
+            return jobs.takes.workspace(clip_id)
         except KeyError:
-            raise HTTPException(404, "Клип, сегмент или голос не найден.") from None
+            raise HTTPException(404, "Клип не найден.") from None
+
+    @router.post("/clips/{clip_id}/generations", status_code=202)
+    def synthesize(clip_id: str, body: GenerationRequest):
+        try:
+            return jobs.takes.generate(clip_id, body.model_dump())
+        except KeyError:
+            raise HTTPException(404, "Клип или дубль не найден.") from None
         except Conflict as error:
             return JSONResponse({"current": error.current}, status_code=409)
+        except CommandConflict as error:
+            raise HTTPException(409, str(error)) from error
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from error
+
+    @router.post("/generations/{generation_id}/cancel")
+    def cancel_generation(generation_id: str):
+        try:
+            return jobs.takes.cancel(generation_id)
+        except KeyError:
+            raise HTTPException(404, "Генерация не найдена.") from None
+
+    @router.put("/clips/{clip_id}/take-selection")
+    def select(clip_id: str, body: SelectionRequest):
+        try:
+            return jobs.takes.select(clip_id, body.take_id, body.version)
+        except KeyError:
+            raise HTTPException(404, "Дубль или WAV не найден.") from None
+        except CommandConflict as error:
+            raise HTTPException(409, str(error)) from error
+
+    @router.patch("/clips/{clip_id}/takes/{take_id}/review")
+    def review(clip_id: str, take_id: str, body: ReviewRequest):
+        try:
+            return jobs.takes.review(clip_id, take_id, body.model_dump(exclude_none=True))
+        except KeyError:
+            raise HTTPException(404, "Дубль не найден.") from None
         except ValueError as error:
             raise HTTPException(422, str(error)) from error
 

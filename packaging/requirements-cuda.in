@@ -1,0 +1,13 @@
+-c requirements-rhel.lock
+torch @ https://download-r2.pytorch.org/whl/cu128/torch-2.10.0%2Bcu128-cp312-cp312-manylinux_2_28_x86_64.whl
+torchaudio @ https://download-r2.pytorch.org/whl/cu128/torchaudio-2.10.0%2Bcu128-cp312-cp312-manylinux_2_28_x86_64.whl
+transformers==4.57.6
+soundfile==0.13.1
+librosa==0.11.0
+einops==0.8.2
+safetensors==0.7.0
+numpy==2.2.6
+# Needed to build the pinned upstream VCS source without build isolation.
+setuptools==82.0.1
+setuptools-scm==9.2.2
+wheel==0.46.3

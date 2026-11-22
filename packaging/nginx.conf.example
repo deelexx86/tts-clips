@@ -1,0 +1,28 @@
+# Install as /etc/nginx/conf.d/tts-clips.conf and replace the hostname and TLS paths.
+map $http_origin $tts_clips_origin_ok {
+    default 0;
+    "" 1;
+    "https://clips.example.com" 1;
+}
+
+server {
+    listen 443 ssl;
+    server_name clips.example.com;
+    ssl_certificate /etc/pki/tls/certs/clips.example.com.pem;
+    ssl_certificate_key /etc/pki/tls/private/clips.example.com.key;
+
+    auth_basic "TTS Clips";
+    auth_basic_user_file /etc/nginx/tts-clips.htpasswd;
+    client_max_body_size 16m;
+    proxy_read_timeout 150s;
+
+    location / {
+        if ($tts_clips_origin_ok = 0) { return 403; }
+        proxy_pass http://127.0.0.1:8765;
+        proxy_http_version 1.1;
+        proxy_set_header Authorization "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-For $remote_addr;
+    }
+}

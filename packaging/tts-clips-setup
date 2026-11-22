@@ -1,0 +1,3 @@
+#!/bin/sh
+cd /usr/share/tts-clips || exit 1
+exec /usr/bin/python3.12 -E -s /usr/share/tts-clips/setup.py "$@"

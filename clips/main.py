@@ -9,6 +9,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from . import __version__
 from .export_api import export_router
 from .exports import Exports
 from .speech_ready import warnings_for
@@ -60,7 +61,7 @@ def create_app(database: Path | None = None, vox: VoxClient | None = None,
         finally:
             jobs.close()
 
-    app = FastAPI(title="TTS Clips", lifespan=lifespan)
+    app = FastAPI(title="TTS Clips", version=__version__, lifespan=lifespan)
     app.include_router(voice_router(jobs))
     app.include_router(export_router(exports))
 

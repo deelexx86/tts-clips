@@ -7,6 +7,7 @@ import importlib.metadata
 import json
 import os
 from pathlib import Path
+import re
 import sys
 import tempfile
 import time
@@ -83,6 +84,8 @@ class Vox:
             data = output.read_bytes()
         return {"audio": base64.b64encode(data).decode("ascii"), "sha256": hashlib.sha256(data).hexdigest(),
                 "reference_sha256": reference_hash, "effective_text": text, "seconds": seconds,
+                # The pinned VoxCPM.generate collapses whitespace before passing text to the model.
+                "model_text": re.sub(r"\s+", " ", text),
                 "model": self.identity}
 
 

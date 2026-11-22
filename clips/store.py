@@ -5,7 +5,7 @@ from pathlib import Path
 import sqlite3
 from uuid import uuid4
 
-from .text import Edit, POLICY, Span, digest, revise
+from .text import Edit, LEGACY_POLICY, POLICY, Span, digest, revise
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS clip (
@@ -91,7 +91,7 @@ class Store:
         clip_id = uuid4().hex
         with closing(self.connect()) as conn, conn:
             conn.execute(f"INSERT INTO clip VALUES (?, NULL, {NOW})", (clip_id,))
-            self.publish(conn, clip_id, None, "", "", [])
+            self.publish(conn, clip_id, None, "", "", [], POLICY, None)
             return self.snapshot(conn, clip_id)
 
     def update(self, clip_id: str, base: str, title: str | None, edits: list[Edit],
@@ -108,20 +108,34 @@ class Store:
             ).fetchone():
                 raise ValueError("Сохранённый голос не найден.")
             new_title = current["title"] if title is None else title
-            old_spans = [
-                Span(row["start"], row["end"], row["segment_id"]) for row in current["spans"]
-            ]
-            text, spans = revise(current["text"], old_spans, edits)
+            policy = current["policy"]
+            text, spans = revise(current["text"], self.spans(current), edits, policy)
             if text == current["text"] and new_title == current["title"] and voice_id == current["voice_id"]:
                 return current
-            self.publish(conn, clip_id, base, new_title, text, spans, voice_id)
+            self.publish(conn, clip_id, base, new_title, text, spans, policy, voice_id)
             return self.snapshot(conn, clip_id)
 
     @staticmethod
-    def publish(conn, clip_id, parent, title, text, spans, voice_id=None):
+    def spans(snapshot):
+        return [Span(row["start"], row["end"], row["segment_id"]) for row in snapshot["spans"]]
+
+    def upgrade_segmentation(self, clip_id: str, base: str) -> dict:
+        with closing(self.connect()) as conn, conn:
+            conn.execute("BEGIN IMMEDIATE")
+            current = self.snapshot(conn, clip_id)
+            if current["revision"] != base:
+                raise Conflict(current)
+            if current["policy"] != LEGACY_POLICY:
+                return current
+            text, spans = revise(current["text"], self.spans(current), [], POLICY)
+            self.publish(conn, clip_id, base, current["title"], text, spans, POLICY, current["voice_id"])
+            return self.snapshot(conn, clip_id)
+
+    @staticmethod
+    def publish(conn, clip_id, parent, title, text, spans, policy, voice_id):
         revision = uuid4().hex
         conn.execute("INSERT INTO revision VALUES (?, ?, ?, ?, ?, ?, ?, 'ru', ?)",
-                     (revision, clip_id, parent, title, text, digest(text), POLICY, voice_id))
+                     (revision, clip_id, parent, title, text, digest(text), policy, voice_id))
         conn.executemany("INSERT INTO span VALUES (?, ?, ?, ?, ?, ?)", [
             (revision, ordinal, span.start, span.end, span.segment_id,
              digest(text[span.start : span.end]) if span.segment_id else None)

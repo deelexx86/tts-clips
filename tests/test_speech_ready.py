@@ -25,9 +25,10 @@ def test_written_forms_report_whole_fragments_and_unicode_positions():
 
 
 def test_confirmation_is_required_only_for_targeted_segments_and_current_revision(tmp_path):
-    with TestClient(create_app(tmp_path / "clips.sqlite3", ControlledVox())) as client:
+    db = tmp_path / "clips.sqlite3"
+    with TestClient(create_app(db, ControlledVox())) as client:
         text = "🚉 На площади 12,75 кг груза.\nВъезд со двора."
-        url, clip, segments = setup_clip(client, text)
+        url, clip, segments = setup_clip(client, text, legacy_db=db)
         assert client.get(url).json() == clip
         assert clip["text"] == text
         assert clip["speech_ready"][0]["text"] == "12,75 кг"

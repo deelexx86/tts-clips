@@ -213,6 +213,8 @@ textarea:focus-visible { outline-offset: 2px; }
 .voice-workspace, .readiness { border: 0; margin: 0; }
 .readiness { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 10px; }
 .readiness p { margin-top: 6px; }
+.segmentation-upgrade { margin-top: 12px; align-items: center; }
+.segmentation-upgrade p { margin: 0; font-size: 13px; color: var(--muted); }
 .voice-workspace .voice-bar { padding: 0; }
 .voice-studio { grid-template-columns: minmax(0, 1fr); gap: 10px; margin-top: 10px; padding: 0; border: 0; }
 .voice-studio details { margin: 6px 0; }

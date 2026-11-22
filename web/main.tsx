@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { editorRange, replacement, type Edit, type Range } from "./text";
+import { editorRange, editorText, replacement, sourceEdit, type Edit, type Range } from "./text";
 import { VoicePanel } from "./voice";
 import { TakesPanel } from "./takes";
 import { ExportPanel } from "./export";
@@ -12,6 +12,7 @@ type Span = { start: number; end: number; segment_id: string | null; text_sha256
 type SpeechSpan = Span & { segment_id: string; text_sha256: string };
 type Snapshot = Summary & {
   revision: string; text: string; spans: Span[]; voice_id: string | null; speech_ready: SpeechWarning[];
+  policy: string; segmentation_upgrade_count: number | null;
 };
 const stages = { prep: "Подготовка", studio: "Озвучка", export: "Экспорт" } as const;
 type Stage = keyof typeof stages;
@@ -104,6 +105,12 @@ function App() {
       (saved.current !== null && draft.current.voice !== saved.current.voice_id);
   }
 
+  function showConflict(current: Snapshot) {
+    competing.current = current;
+    setConflict(current);
+    setStatus("conflict");
+  }
+
   function persist(): Promise<boolean> {
     window.clearTimeout(timer.current);
     if (inFlight.current) return inFlight.current;
@@ -126,9 +133,7 @@ function App() {
         });
         if (response.status === 409) {
           const { current } = await response.json() as { current: Snapshot };
-          competing.current = current;
-          setConflict(current);
-          setStatus("conflict");
+          showConflict(current);
           return false;
         }
         if (!response.ok) throw new Error(await response.text());
@@ -163,7 +168,7 @@ function App() {
   }
 
   function editText(value: string) {
-    const before = draft.current.text;
+    const before = editorText(draft.current.text);
     const selection = selectedRange.current;
     selectedRange.current = null;
     if (value === before) return;
@@ -174,7 +179,14 @@ function App() {
       if (selection.inputType.endsWith("Backward")) range = [caret - removed, caret];
       if (selection.inputType.endsWith("Forward")) range = [caret, caret + removed];
     }
-    pending.current.push(replacement(before, value, range));
+    applyEdit(replacement(before, value, range));
+  }
+
+  function applyEdit(edit: Edit) {
+    const mapped = sourceEdit(draft.current.text, edit);
+    const points = Array.from(draft.current.text);
+    const value = points.slice(0, mapped.start).join("") + mapped.text + points.slice(mapped.end).join("");
+    pending.current.push(mapped);
     draft.current.text = value;
     setText(value);
     if (!competing.current) setStatus("pending");
@@ -197,6 +209,38 @@ function App() {
       requestAnimationFrame(() => textarea.current?.focus());
     } catch {
       setNotice("Не удалось открыть клип. Проверьте подключение и повторите.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function upgradeSegmentation() {
+    const base = saved.current;
+    if (!base || base.segmentation_upgrade_count === null || loading || dirty() ||
+        inFlight.current || competing.current || composing.current) return;
+    setLoading(true);
+    setNotice("");
+    try {
+      const response = await fetch("/api/clips/" + base.id + "/segmentation-upgrade", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ base_revision: base.revision }),
+      });
+      if (response.status === 409) {
+        const { current } = await response.json() as { current: Snapshot };
+        showConflict(current);
+        return;
+      }
+      if (!response.ok) throw new Error(await response.text());
+      const snapshot: Snapshot = await response.json();
+      const ids = new Set(snapshot.spans.map((span) => span.segment_id));
+      setMarked((previous) => previous.filter((id) => ids.has(id)));
+      setActive((previous) => ids.has(previous) ? previous : null);
+      saved.current = snapshot;
+      setClip(snapshot);
+      mergeSummary(snapshot);
+    } catch {
+      setNotice("Не удалось обновить разбиение. Проверьте подключение и повторите.");
     } finally {
       setLoading(false);
     }
@@ -294,7 +338,7 @@ function App() {
       input.setSelectionRange(start, end);
       if (ruler.current) {
         ruler.current.style.width = input.clientWidth + "px";
-        ruler.current.textContent = text.slice(0, start) + "\u200b";
+        ruler.current.textContent = input.value.slice(0, start) + "\u200b";
         input.scrollTop = Math.max(0, ruler.current.scrollHeight - input.clientHeight / 2);
       }
     });
@@ -378,14 +422,37 @@ function App() {
                 <section className="editor" aria-labelledby="text-heading">
                   <div className="pane-head">
                     <h2 id="text-heading"><label htmlFor="clip-text">Русский текст</label></h2>
-                    <span>{points.length.toLocaleString("ru-RU")} зн.</span>
+                    <span>{points.length.toLocaleString("ru-RU")} зн. · {currentPlan ?
+                      `Сегментов: ${segments.length.toLocaleString("ru-RU")}` : "Разбиение после сохранения"}</span>
                   </div>
-                  <textarea ref={textarea} id="clip-text" value={text} placeholder="Вставьте или напишите текст…"
+                  <textarea ref={textarea} id="clip-text" value={editorText(text)} placeholder="Вставьте или напишите текст…"
                     disabled={loading} onChange={(event) => editText(event.target.value)}
+                    onPaste={(event) => {
+                      const pasted = event.clipboardData.getData("text/plain");
+                      if (clip.policy !== "clips-text-v2" || !pasted.includes("\r")) return;
+                      const input = event.currentTarget;
+                      const start = input.selectionStart;
+                      event.preventDefault();
+                      selectedRange.current = null;
+                      applyEdit({
+                        start: Array.from(input.value.slice(0, start)).length,
+                        end: Array.from(input.value.slice(0, input.selectionEnd)).length,
+                        text: pasted,
+                      });
+                      const caret = start + editorText(pasted).length;
+                      requestAnimationFrame(() => input.setSelectionRange(caret, caret));
+                    }}
                     onCompositionStart={() => { composing.current = true; }}
                     onCompositionEnd={() => { composing.current = false; schedule(); }}
                     onBlur={() => { if (dirty()) void persist(); }}/>
                   <div ref={ruler} aria-hidden="true" className="ruler"/>
+                  {clip.segmentation_upgrade_count !== null && <div className="segmentation-upgrade actions">
+                    <p>{currentPlan ?
+                      `Сегментов до обновления — ${segments.length}. После — ${clip.segmentation_upgrade_count}.` :
+                      "Количество сегментов обновится после сохранения."}</p>
+                    <button className="subtle" onClick={() => void upgradeSegmentation()}
+                      disabled={status !== "saved" || loading || !currentPlan}>Обновить разбиение</button>
+                  </div>}
                   <section className="readiness" aria-labelledby="readiness-heading">
                     <h2 id="readiness-heading">Готовность текста</h2>
                     <p role="status">{!text.trim() ? "Вставьте готовый русский перевод." :

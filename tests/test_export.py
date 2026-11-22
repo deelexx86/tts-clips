@@ -52,8 +52,8 @@ class ExportWhisper:
         return Transcript(phrase, phrase)
 
 
-def prepare(client, text="One.\nTwo.\nThree."):
-    url, clip, segment_ids = setup_clip(client, text)
+def prepare(client, text="One.\nTwo.\nThree.", *, legacy_db=None):
+    url, clip, segment_ids = setup_clip(client, text, legacy_db=legacy_db)
     ready = [await_job(client, item["id"]) for item in batch(client, url, clip, "first")["jobs"]]
     return url, clip, segment_ids, ready
 
@@ -86,7 +86,7 @@ def test_exact_master_snapshots_and_restart(tmp_path):
     voice = ExportVoice()
     db = tmp_path / "clips.sqlite3"
     with TestClient(create_app(db, voice)) as client:
-        url, clip, segments, takes = prepare(client)
+        url, clip, segments, takes = prepare(client, legacy_db=db)
         assert status_codes(plan(client, url, clip)[1], "blockers") == ["qc_unavailable"] * 3
         for job in takes:
             approve(client, url, job)
@@ -139,7 +139,7 @@ def test_qc_version_and_bad_takes_block_both_exports(tmp_path):
     recognizer = ExportWhisper()
     db = tmp_path / "clips.sqlite3"
     with TestClient(create_app(db, ExportVoice(), recognizer)) as client:
-        url, clip, segments, takes = prepare(client, "One.\nTwo.")
+        url, clip, segments, takes = prepare(client, "One.\nTwo.", legacy_db=db)
         for job in takes:
             qc_state(client, url + "/takes/" + job["id"] + "/qc", "complete")
         opts, proposal = plan(client, url, clip)

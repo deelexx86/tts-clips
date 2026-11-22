@@ -9,6 +9,7 @@ import pytest
 from clips.completion import Transcript
 from clips.main import create_app
 from clips.recovery import GAP_FRAMES, split_at_sentence
+from clips.text import POLICY
 from clips.vox import Cancelled
 from test_voice import ControlledVox, await_job, batch, qc_state, setup_clip
 
@@ -16,8 +17,14 @@ from test_voice import ControlledVox, await_job, batch, qc_state, setup_clip
 TEXT = "Утром мы встретили старого друга. Вечером приехала вся семья."
 SINGLE = "Сегодня утром мы все вместе пошли гулять к реке."
 FULL = "Утром мы встретили старого друга."
-FIRST = TEXT[:split_at_sentence(TEXT)]
-SECOND = TEXT[len(FIRST):]
+LONG_TEXT = (
+    "К вечеру река успокоилась, и смотритель старой пристани обошёл причалы, пока последние "
+    "пассажиры возвращались с острова и выбирали дорогу к автобусной остановке. "
+    "Перед закрытием он поднял с мостовой забытый шарф, отнёс его в окошко дежурного и записал "
+    "в журнал, на какой из скамеек обычно ждут владельцев потерянных вещей. "
+    "У дальнего спуска остался гореть фонарь, по которому рыбаки с другого берега могли понять, "
+    "что калитку у причала закроют только после последнего рейса."
+)
 
 
 def wav(value, frames):
@@ -33,21 +40,24 @@ def sample(value, frames):
 
 
 class RecoveryVox(ControlledVox):
-    def __init__(self, *, noisy=False, pause=False):
+    def __init__(self, *, noisy=False, pause=False, text=TEXT):
         super().__init__()
         self.noisy = noisy
         self.pause = pause
         self.calls = []
+        self.text = text
+        cut = split_at_sentence(text, POLICY)
+        self.first, self.second = text[:cut], text[cut:]
 
     def generate(self, key, payload, reference, progress, cancelled):
         text, seed = payload["text"], payload["seed"]
         self.calls.append((text, seed))
-        if text in (TEXT, SINGLE):
+        if text in (self.text, SINGLE):
             value = 100 if seed == 42 else 200
             return wav(value, 48000), {"reused": True}
-        if text == FIRST:
+        if text == self.first:
             return wav(3000 if self.noisy else 300, 12000), {"reused": True}
-        if text == SECOND:
+        if text == self.second:
             self.entered.set()
             while self.pause and not self.release.wait(0.02):
                 if cancelled():
@@ -57,10 +67,11 @@ class RecoveryVox(ControlledVox):
 
 
 class RecoveryWhisper:
-    def __init__(self, *, heals=False, suspect=False, verified=False):
+    def __init__(self, *, heals=False, suspect=False, verified=False, text=TEXT):
         self.heals = heals
         self.suspect = suspect
         self.verified = verified
+        self.text = text
 
     def identity(self, stopping):
         return {"test": 1}
@@ -69,7 +80,7 @@ class RecoveryWhisper:
         with wave.open(str(path), "rb") as audio:
             value = int.from_bytes(audio.readframes(1), "little", signed=True)
         if self.verified or value in (300, 3000) or (value == 200 and self.heals):
-            return Transcript(TEXT, TEXT)
+            return Transcript(self.text, self.text)
         if self.suspect:
             return Transcript(TEXT.replace("семья", "группа"), TEXT.replace("семья", "группа"))
         return Transcript(FULL, FULL)
@@ -102,11 +113,13 @@ def recovery_state(client, url, run_id, state):
     pytest.fail(f"recovery did not reach {state}: {item}")
 
 
-def test_split_recovery_has_exact_parts_and_exports_without_auto_select(tmp_path):
+@pytest.mark.parametrize("text", [TEXT, LONG_TEXT])
+def test_split_recovery_has_exact_parts_and_exports_without_auto_select(tmp_path, text):
     db = tmp_path / "clips.sqlite3"
-    voice = RecoveryVox()
-    with TestClient(create_app(db, voice, RecoveryWhisper())) as client:
-        url, clip, source = prepared(client)
+    voice = RecoveryVox(text=text)
+    with TestClient(create_app(db, voice, RecoveryWhisper(text=text))) as client:
+        url, clip, source = prepared(client, text)
+        assert clip["policy"] == POLICY and len(clip["spans"]) == 1
         original = client.get("/api/audio/" + source["result"]["asset"]["sha256"]).content
         run = command(client, url, clip, "repair").json()
         assert command(client, url, clip, "repair", source["id"]).status_code == 409
@@ -119,11 +132,11 @@ def test_split_recovery_has_exact_parts_and_exports_without_auto_select(tmp_path
         assert workspace["selections"][0]["current"] == source["id"]
         assert client.get("/api/audio/" + source["result"]["asset"]["sha256"]).content == original
         final = await_job(client, split["job_id"])
-        assert final["request"]["text"] == TEXT and final["request"]["recovery"]["source_take"] == source["id"]
+        assert final["request"]["text"] == text and final["request"]["recovery"]["source_take"] == source["id"]
         recorded = final["result"]["recovery"]
-        assert "".join(part["text"] for part in recorded["parts"]) == TEXT
+        assert "".join(part["text"] for part in recorded["parts"]) == text
         assert [(part["start"], part["end"]) for part in recorded["parts"]] == [
-            (0, len(FIRST)), (len(FIRST), len(TEXT))
+            (0, len(voice.first)), (len(voice.first), len(text))
         ]
         assert all(client.get("/api/audio/" + part["asset"]["sha256"]).is_success for part in recorded["parts"])
         audio = client.get("/api/audio/" + final["result"]["asset"]["sha256"]).content
@@ -202,7 +215,7 @@ def test_recovery_queued_before_shutdown_resumes(tmp_path):
     db = tmp_path / "clips.sqlite3"
     voice = RecoveryVox()
     with TestClient(create_app(db, voice, RecoveryWhisper())) as client:
-        url, clip, segments = setup_clip(client, TEXT + "\nHold.")
+        url, clip, segments = setup_clip(client, TEXT + "\nHold.", legacy_db=db)
         first = batch(client, url, clip, "baseline", "selected", segments[:1])["jobs"][0]
         source = await_job(client, first["id"])
         qc_state(client, url + "/takes/" + source["id"] + "/qc", "complete")

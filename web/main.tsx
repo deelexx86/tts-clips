@@ -13,6 +13,8 @@ type SpeechSpan = Span & { segment_id: string; text_sha256: string };
 type Snapshot = Summary & {
   revision: string; text: string; spans: Span[]; voice_id: string | null; speech_ready: SpeechWarning[];
 };
+const stages = { prep: "Подготовка", studio: "Озвучка", export: "Экспорт" } as const;
+type Stage = keyof typeof stages;
 type SaveState = "saved" | "pending" | "saving" | "error" | "conflict";
 
 const stateLabel: Record<SaveState, string> = {
@@ -27,6 +29,7 @@ async function request(url: string, init?: RequestInit) {
 }
 
 function App() {
+  const [stage, setStage] = useState<Stage>("prep");
   const [clips, setClips] = useState<Summary[]>([]);
   const [clip, setClip] = useState<Snapshot | null>(null);
   const [text, setText] = useState("");
@@ -39,6 +42,7 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [notice, setNotice] = useState("");
   const [showLibrary, setShowLibrary] = useState(false);
+  const libraryToggle = useRef<HTMLButtonElement>(null);
   const textarea = useRef<HTMLTextAreaElement>(null);
   const ruler = useRef<HTMLDivElement>(null);
   const conflictHeading = useRef<HTMLHeadingElement>(null);
@@ -71,6 +75,7 @@ function App() {
     setVoice(snapshot.voice_id);
     setConflict(null);
     setStatus("saved");
+    setStage("prep");
     setActive(null);
     setMarked([]);
     const url = new URL(window.location.href);
@@ -104,7 +109,10 @@ function App() {
     if (inFlight.current) return inFlight.current;
     const base = saved.current;
     if (competing.current || composing.current) return Promise.resolve(false);
-    if (!base || !dirty()) return Promise.resolve(true);
+    if (!base || !dirty()) {
+      setStatus("saved");
+      return Promise.resolve(true);
+    }
     const edits = pending.current.slice();
     const titleSent = draft.current.title;
     const voiceSent = draft.current.voice;
@@ -213,6 +221,24 @@ function App() {
     textarea.current?.focus();
   }
 
+  useEffect(() => {
+    if (!showLibrary) return;
+    function dismiss(event: KeyboardEvent) {
+      if (event.key !== "Escape") return;
+      setShowLibrary(false);
+      libraryToggle.current?.focus();
+    }
+    function outside(event: PointerEvent) {
+      if (event.target instanceof Element && !event.target.closest("#library, .library-toggle")) setShowLibrary(false);
+    }
+    document.addEventListener("keydown", dismiss);
+    document.addEventListener("pointerdown", outside);
+    return () => {
+      document.removeEventListener("keydown", dismiss);
+      document.removeEventListener("pointerdown", outside);
+    };
+  }, [showLibrary]);
+
   useEffect(() => { void boot(); }, []);
   useEffect(() => {
     function confirmClose(event: BeforeUnloadEvent) {
@@ -251,32 +277,53 @@ function App() {
 
   const points = Array.from(text);
   const currentPlan = clip?.text === text;
-  const segments = currentPlan ? clip?.spans.filter(
+  const savedPoints = Array.from(clip?.text ?? "");
+  const segments = (clip?.spans.filter(
     (span): span is SpeechSpan => span.segment_id !== null && span.text_sha256 !== null
-  ) ?? [] : [];
+  ) ?? []).map((span) => ({ ...span, text: savedPoints.slice(span.start, span.end).join("") }));
 
   function locate(span: Pick<Span, "start" | "end">, segmentId: string | null = null) {
-    const input = textarea.current;
-    if (!input) return;
-    const [start, end] = editorRange(points, span.start, span.end);
-    input.focus();
-    input.setSelectionRange(start, end);
-    if (ruler.current) {
-      ruler.current.style.width = input.clientWidth + "px";
-      ruler.current.textContent = text.slice(0, start) + "\u200b";
-      input.scrollTop = Math.max(0, ruler.current.scrollHeight - input.clientHeight / 2);
-    }
-    setActive(segmentId);
+    if (!currentPlan) return;
+    navigate("prep");
+    if (segmentId) setActive(segmentId);
+    requestAnimationFrame(() => {
+      const input = textarea.current;
+      if (!input) return;
+      const [start, end] = editorRange(points, span.start, span.end);
+      input.focus();
+      input.setSelectionRange(start, end);
+      if (ruler.current) {
+        ruler.current.style.width = input.clientWidth + "px";
+        ruler.current.textContent = text.slice(0, start) + "\u200b";
+        input.scrollTop = Math.max(0, ruler.current.scrollHeight - input.clientHeight / 2);
+      }
+    });
   }
+
+  function navigate(next: Stage) {
+    if (next === stage) return;
+    document.querySelectorAll("audio").forEach((audio) => audio.pause());
+    setStage(next);
+  }
+
+  function openSegment(id: string) {
+    setActive(id);
+    navigate("studio");
+    requestAnimationFrame(() => document.getElementById("active-segment")?.focus());
+  }
+
+  const segment = segments.find((span) => span.segment_id === active) ?? segments[0] ?? null;
 
   return (
     <div className="shell">
       <header className="top">
-        <div className="brand"><span className="mark" aria-hidden="true"><i/><i/><i/><i/></span>TTS Clips</div>
-        <button className="subtle mobile-library" aria-expanded={showLibrary}
-          aria-controls="library" onClick={() => setShowLibrary(!showLibrary)}>Клипы</button>
-        {clip && <span className={"save " + status} role="status">{stateLabel[status]}</span>}
-        {status === "error" && <button className="subtle" onClick={() => void persist()}>Повторить</button>}
+        <div className="top-inner">
+          <div className="brand">TTS Clips</div>
+          <button ref={libraryToggle} className="subtle library-toggle" aria-expanded={showLibrary}
+            aria-controls="library" onClick={() => setShowLibrary(!showLibrary)}>Клипы</button>
+          {clip && <span className={"save " + status} role="status">{stateLabel[status]}</span>}
+          {status === "error" && <button className="subtle" onClick={() => void persist()}>Повторить</button>}
+        </div>
       </header>
 
       <div className="layout">
@@ -301,8 +348,7 @@ function App() {
           </div>}
           {clip ? <>
             <div className="work-header">
-              <label className="eyebrow" htmlFor="clip-title">Название клипа</label>
-              <input id="clip-title" className="title" value={title} maxLength={120} placeholder="Без названия"
+              <input aria-label="Название клипа" id="clip-title" className="title" value={title} maxLength={120} placeholder="Без названия"
                 disabled={loading} onChange={(event) => {
                   draft.current.title = event.target.value;
                   setTitle(event.target.value);
@@ -321,61 +367,61 @@ function App() {
                 <button className="primary" onClick={() => resolveConflict(true)}>Сохранить мой черновик</button>
               </div>
             </section>}
-            <VoicePanel key={"voice-" + clip.id} voice={voice} selectVoice={(id) => {
-                draft.current.voice = id;
-                setVoice(id);
-                if (!competing.current) setStatus("pending");
-                schedule();
-              }}/>
-            <ExportPanel key={"export-" + clip.id} clip={clip} saved={status === "saved" && !loading}
-              locate={(id) => {
-                const span = segments.find((item) => item.segment_id === id);
-                if (span) locate(span, span.segment_id);
-              }}/>
-            <TakesPanel key={"takes-" + clip.id} clip={clip} voice={voice} segments={segments}
-              segment={segments.find((span) => span.segment_id === active) ?? null}
-              marked={marked.filter((id) => segments.some((span) => span.segment_id === id))}
-              saved={status === "saved" && !loading} locate={locate}/>
-            {currentPlan && clip.speech_ready.length > 0 && <details className="speech-ready" open>
-              <summary>Подготовка к озвучке · {clip.speech_ready.length}</summary>
-              <SpeechWarnings warnings={clip.speech_ready} locate={locate}/>
-            </details>}
-            <div className="editor-grid">
-              <section className="editor" aria-labelledby="text-heading">
-                <div className="pane-head">
-                  <h2 id="text-heading"><label htmlFor="clip-text">Текст</label></h2>
-                  <span>{points.length.toLocaleString("ru-RU")} зн.</span>
+            <nav className="stage-nav" aria-label="Этапы работы">
+              {(Object.keys(stages) as Stage[]).map((item) =>
+                <button type="button" key={item} aria-current={stage === item ? "step" : undefined}
+                  onClick={() => navigate(item)}>{stages[item]}</button>
+              )}
+            </nav>
+            <section className="work-stage" aria-label="Подготовка" hidden={stage !== "prep"}>
+              <div className="prep-grid">
+                <section className="editor" aria-labelledby="text-heading">
+                  <div className="pane-head">
+                    <h2 id="text-heading"><label htmlFor="clip-text">Русский текст</label></h2>
+                    <span>{points.length.toLocaleString("ru-RU")} зн.</span>
+                  </div>
+                  <textarea ref={textarea} id="clip-text" value={text} placeholder="Вставьте или напишите текст…"
+                    disabled={loading} onChange={(event) => editText(event.target.value)}
+                    onCompositionStart={() => { composing.current = true; }}
+                    onCompositionEnd={() => { composing.current = false; schedule(); }}
+                    onBlur={() => { if (dirty()) void persist(); }}/>
+                  <div ref={ruler} aria-hidden="true" className="ruler"/>
+                  <section className="readiness" aria-labelledby="readiness-heading">
+                    <h2 id="readiness-heading">Готовность текста</h2>
+                    <p role="status">{!text.trim() ? "Вставьте готовый русский перевод." :
+                      !currentPlan ? "Проверка обновится после сохранения." :
+                      clip.speech_ready.length ? "Раскройте письменные формы перед озвучкой." :
+                      "Письменных форм, требующих подготовки, не найдено."}</p>
+                    {currentPlan && clip.speech_ready.length > 0 &&
+                      <SpeechWarnings warnings={clip.speech_ready} locate={locate}/>}
+                  </section>
+                </section>
+                <div className="prep-side">
+                  <VoicePanel key={"voice-" + clip.id} voice={voice} disabled={loading} selectVoice={(id) => {
+                    if (saved.current?.id !== clip.id) return;
+                    draft.current.voice = id;
+                    setVoice(id);
+                    if (!competing.current) setStatus("pending");
+                    schedule();
+                  }}/>
                 </div>
-                <textarea ref={textarea} id="clip-text" value={text} placeholder="Вставьте или напишите текст…"
-                  disabled={loading} onChange={(event) => editText(event.target.value)}
-                  onCompositionStart={() => { composing.current = true; }}
-                  onCompositionEnd={() => { composing.current = false; schedule(); }}
-                  onBlur={() => { if (dirty()) void persist(); }}/>
-                <div ref={ruler} aria-hidden="true" className="ruler"/>
-              </section>
-              <section className="segments" aria-labelledby="segment-heading">
-                <div className="pane-head">
-                  <h2 id="segment-heading">Сегменты</h2>
-                  {currentPlan && <span>{segments.length}</span>}
-                </div>
-                {segments.length > 0 ? <ol>{segments.map((span, index) =>
-                  <li key={span.segment_id}>
-                    <input type="checkbox" aria-label={"Включить сегмент " + (index + 1) + " в генерацию"}
-                      checked={marked.includes(span.segment_id)} onChange={(event) => {
-                        const checked = event.target.checked;
-                        setMarked((ids) => checked ? [...ids, span.segment_id] : ids.filter((id) => id !== span.segment_id));
-                      }}/>
-                    <button aria-pressed={active === span.segment_id} onClick={() => locate(span, span.segment_id)}>
-                      <span className="number">{String(index + 1).padStart(2, "0")}</span>
-                      <span>{points.slice(span.start, span.end).join("")}</span>
-                    </button>
-                  </li>)}</ol> : <p className="hint">
-                    {currentPlan ? "Вставьте текст, чтобы увидеть его сегменты." :
-                      conflict ? "Разрешите конфликт, чтобы обновить сегменты." :
-                        status === "error" ? "Повторите сохранение, чтобы обновить сегменты." : "Обновляем сегменты…"}
-                  </p>}
-              </section>
-            </div>
+              </div>
+              <footer className="stage-head prep-footer">
+                <p>{!text.trim() ? "Вставьте русский текст." :
+                  !voice ? "Выберите или создайте голос." : status !== "saved" ? "Дождитесь сохранения." : "Текст и голос сохранены."}</p>
+                <button className="primary" onClick={() => navigate("studio")}>К озвучке</button>
+              </footer>
+            </section>
+            <section aria-label="Озвучка" hidden={stage !== "studio"}>
+              <TakesPanel key={"takes-" + clip.id} clip={clip} voice={voice} segments={segments}
+                segment={segment} selectSegment={openSegment} marked={marked} setMarked={setMarked}
+                saved={status === "saved" && !loading} locate={locate} prepare={() => navigate("prep")}
+                next={() => navigate("export")} visible={stage === "studio"}/>
+            </section>
+            <section aria-label="Экспорт" hidden={stage !== "export"}>
+              <ExportPanel key={"export-" + clip.id} clip={clip} saved={status === "saved" && !loading}
+                active={stage === "export"} locate={openSegment}/>
+            </section>
           </> : !loading && !notice && <section className="welcome">
             <span className="mark large" aria-hidden="true"><i/><i/><i/><i/></span>
             <h1>Первый клип</h1>

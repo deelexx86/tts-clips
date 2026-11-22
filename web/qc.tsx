@@ -26,10 +26,6 @@ export type QC = {
 
 export const qcPending = (qc?: QC) => qc?.state === "queued" || qc?.state === "running";
 
-export const hasProblem = (qc?: QC) => qc?.state === "failed" ||
-  qc?.report?.status === "suspect" || qc?.report?.status === "likely_defect" ||
-  qc?.pronunciation_integrity?.status === "review";
-
 const verdicts = {
   verified: "Полнота подтверждена",
   suspect: "Проверить на слух",
@@ -63,15 +59,8 @@ export function QcDetails({ qc, disabled, recheck }: { qc: QC; disabled: boolean
   const integrity = qc.pronunciation_integrity;
   const label = qc.state === "complete" && report ? verdicts[report.status] : statuses[qc.state];
   return <details className="take-qc">
-    <summary>
-      Whisper <span role="status" className={"qc-status " + (qc.state === "complete" ? report?.status : qc.state)}
-        title={qc.state === "complete" ? report?.status : qc.state}>
-        {label}
-      </span>
-      {integrity?.status === "review" && <span className="qc-status suspect">
-        Проверьте точность произнесения
-      </span>}
-    </summary>
+    <summary>Подробности проверки</summary>
+    <p>Whisper · {label}{integrity?.status === "review" && " · Проверьте точность произнесения"}</p>
     {qc.error && <p role="alert" className="voice-error">{qc.error}</p>}
     <div className="actions">
       <button className="subtle" disabled={disabled || qcPending(qc)} onClick={recheck}>

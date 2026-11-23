@@ -1,0 +1,11 @@
+services:
+  frontend:
+    image: tts-clips/frontend:c1.11
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    environment:
+      TTS_CLIPS_BACKEND_URL: ${TTS_CLIPS_BACKEND_URL:?Set the internal backend HTTP URL in .env}
+    ports:
+      - "80:80"
+    restart: unless-stopped

@@ -3,7 +3,6 @@
 
 import argparse
 from fcntl import flock, LOCK_EX
-from hashlib import file_digest
 import json
 import os
 from pathlib import Path
@@ -15,6 +14,7 @@ from urllib.error import URLError
 from urllib.request import build_opener, ProxyHandler
 
 from clips import __version__
+from clips.model_files import prepare_models
 from clips.vox_worker import UPSTREAM
 
 APP = Path(__file__).resolve().parent
@@ -71,41 +71,12 @@ print(f"PyTorch {torch.__version__}, CUDA {torch.version.cuda}, {torch.cuda.get_
 """, timeout=90)
 
 
-def matches(path, checksum):
-    if not path.is_file():
-        return False
-    with path.open("rb") as file:
-        return file_digest(file, "sha256").hexdigest() == checksum
-
-
 def install_models():
-    manifest = json.loads((APP / "models.json").read_text(encoding="utf-8"))
-    for name, entry in manifest.items():
-        source = {key: entry[key] for key in ("repository", "revision")}
-        model = ROOT / "models" / f"{name}-{source['revision']}"
-        receipt = model / "tts-books-model.json"
-        if model.exists():
-            if (all(matches(model / file, digest) for file, digest in entry["files"].items()) and
-                    receipt.is_file() and json.loads(receipt.read_text("utf-8")) == source):
-                continue
-            raise RuntimeError(f"Model files failed verification in {model}. Move the directory aside and rerun.")
+    def download(source, file, partial):
+        run(PYTHON.with_name("hf"), "download", source["repository"], file,
+            "--revision", source["revision"], "--local-dir", partial)
 
-        partial = model.with_suffix(".partial")
-        partial.mkdir(parents=True, exist_ok=True)
-        for file, digest in entry["files"].items():
-            path = partial / file
-            if matches(path, digest):
-                continue
-            path.unlink(missing_ok=True)
-            print(f"Downloading {source['repository']}/{file}", flush=True)
-            run(PYTHON.with_name("hf"), "download",
-                source["repository"], file, "--revision", source["revision"], "--local-dir", partial)
-            if not matches(path, digest):
-                path.unlink(missing_ok=True)
-                raise RuntimeError(f"SHA-256 mismatch for {path}")
-        (partial / receipt.name).write_text(json.dumps(source) + "\n", encoding="utf-8")
-        shutil.rmtree(partial / ".cache", ignore_errors=True)
-        partial.rename(model)
+    prepare_models(APP / "models.json", ROOT / "models", download)
 
 
 def start_service():

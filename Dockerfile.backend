@@ -1,0 +1,38 @@
+# syntax=docker/dockerfile:1
+FROM ghcr.io/astral-sh/uv:0.11.0@sha256:e49fde5daf002023f0a2e2643861ce9ca8a8da5b73d0e6db83ef82ff99969baf AS uv
+FROM python:3.12-slim-bookworm@sha256:935c3c5b12357a7e10caa9c1e6ca5692344d97cf229832ef584be2cec9fc03df AS runtime
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
+FROM runtime AS dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /build
+COPY packaging/requirements-rhel.lock packaging/requirements-cuda.lock ./
+COPY clips/vox_worker.py ./
+RUN --mount=type=cache,target=/root/.cache/uv \
+    --mount=type=bind,from=uv,source=/uv,target=/usr/local/bin/uv \
+    python -m venv /opt/tts-venv \
+    && UV_LINK_MODE=copy uv pip install --python /opt/tts-venv/bin/python \
+        --require-hashes --only-binary=:all: \
+        -r requirements-rhel.lock -r requirements-cuda.lock \
+    && /opt/tts-venv/bin/pip check \
+    && upstream="$(python -c 'from vox_worker import UPSTREAM; print(UPSTREAM)')" \
+    && /opt/tts-venv/bin/pip install --no-compile --no-deps --no-build-isolation \
+        "voxcpm @ git+https://github.com/OpenBMB/VoxCPM.git@${upstream}"
+
+FROM runtime
+RUN groupadd -g 10001 tts-clips && useradd -u 10001 -g 10001 -M tts-clips \
+    && install -d -o 10001 -g 10001 -m 0750 /models /data /cache
+WORKDIR /app
+COPY --from=dependencies /opt/tts-venv /opt/tts-venv
+COPY clips/ ./clips/
+COPY packaging/models.json ./packaging/models.json
+COPY docker/backend.py ./backend.py
+ENV PATH=/opt/tts-venv/bin:$PATH HOME=/cache XDG_CACHE_HOME=/cache HF_HOME=/cache/huggingface \
+    NUMBA_CACHE_DIR=/cache/numba TMPDIR=/cache PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUTF8=1 HF_HUB_DOWNLOAD_TIMEOUT=60 TTS_CLIPS_DB=/data/clips.sqlite3
+USER 10001:10001
+EXPOSE 8765
+ENTRYPOINT ["python", "/app/backend.py"]
+HEALTHCHECK --interval=30s --timeout=4s --start-period=30m CMD ["python", "-c", "from urllib.request import urlopen; urlopen('http://127.0.0.1:8765/api/clips', timeout=3).close()"]

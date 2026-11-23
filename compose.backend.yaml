@@ -1,0 +1,40 @@
+services:
+  backend:
+    image: tts-clips/backend:c1.11
+    platform: linux/amd64
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    environment:
+      HF_HUB_OFFLINE: ${HF_HUB_OFFLINE:-0}
+    ports:
+      - "${TTS_CLIPS_BACKEND_BIND:-127.0.0.1}:8765:8765"
+    volumes:
+      - type: bind
+        source: ${TTS_CLIPS_ROOT:-/srv/tts-clips}/models
+        target: /models
+        bind:
+          create_host_path: false
+          selinux: Z
+      - type: bind
+        source: ${TTS_CLIPS_ROOT:-/srv/tts-clips}/data
+        target: /data
+        bind:
+          create_host_path: false
+          selinux: Z
+      - type: bind
+        source: ${TTS_CLIPS_ROOT:-/srv/tts-clips}/cache
+        target: /cache
+        bind:
+          create_host_path: false
+          selinux: Z
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 120s

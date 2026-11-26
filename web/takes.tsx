@@ -34,6 +34,17 @@ type Props = {
 const statusOf = (take?: Take) =>
   takeStatus(take?.state, take?.review?.decision, take?.qc, Boolean(take?.request.recovery));
 
+function newCommandKey(): string {
+  // getRandomValues is available on plain HTTP origins.
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  bytes[6] = (bytes[6] & 0x0f) | 0x40; // UUID version 4
+  bytes[8] = (bytes[8] & 0x3f) | 0x80; // RFC variant
+  const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+  return [
+    hex.slice(0, 8), hex.slice(8, 12), hex.slice(12, 16), hex.slice(16, 20), hex.slice(20),
+  ].join("-");
+}
+
 function Status({ status }: { status: ReturnType<typeof takeStatus> }) {
   return <span className={"record-status " + status.tone}>{status.label}</span>;
 }
@@ -200,7 +211,7 @@ export function TakesPanel({ clip, voice, segment, segments, marked, setMarked, 
 
   function generate(mode: Command["mode"], source?: Take) {
     send({
-      revision: clip.revision, key: crypto.randomUUID(), mode,
+      revision: clip.revision, key: newCommandKey(), mode,
       segments: mode === "missing" ? [] : source?.segment_id ? [source.segment_id] : targets,
       ...(source && { source_take: source.id }),
     });
@@ -226,7 +237,7 @@ export function TakesPanel({ clip, voice, segment, segments, marked, setMarked, 
   }
 
   function startRecovery(source?: Take) {
-    recover({ revision: clip.revision, key: crypto.randomUUID(), include_suspect: includeSuspect,
+    recover({ revision: clip.revision, key: newCommandKey(), include_suspect: includeSuspect,
       ...(source && { source_take: source.id }) });
   }
 
